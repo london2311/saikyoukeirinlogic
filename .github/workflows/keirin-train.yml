@@ -26,17 +26,28 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
+      # 収集データが別リポジトリ（非公開）にある場合: そのリポジトリを読めるトークンを
+      # Settings → Secrets → Actions に DATA_REPO_TOKEN、リポジトリ名を Variables に DATA_REPO（例 london2311/datebase）で登録
+      - name: 収集リポジトリを取得（設定がある場合のみ）
+        if: ${{ vars.DATA_REPO != '' }}
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ vars.DATA_REPO }}
+          token: ${{ secrets.DATA_REPO_TOKEN }}
+          path: _data_repo
       - name: 学習・検証・埋め込み
         run: |
           pip install --quiet pandas numpy scipy
-          python analysis/check_data.py | tail -8
-          python analysis/train_model.py --embed
+          DATA_ARG=""
+          if [ -d _data_repo ]; then DATA_ARG="--data _data_repo"; fi
+          python analysis/train_model.py --embed $DATA_ARG
       - name: テスト
         run: node tests/engine_test.js
       - name: コミット
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          rm -rf _data_repo
           git add analysis index.html
           if git diff --cached --quiet; then echo "変更なし"; exit 0; fi
           git commit -m "model: 週次再学習 $(date -u -d '+9 hours' +%Y-%m-%d)"

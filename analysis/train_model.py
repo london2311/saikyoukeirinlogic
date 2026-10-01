@@ -643,7 +643,16 @@ def main():
         'fusion_type': fusion.get('type') if fusion else None,
         'fusion_races': fusion['races'] if fusion else 0,
     }
-    with open(os.path.join(OUT_DIR, 'model_v104.json'), 'w', encoding='utf-8') as f:
+    # 安全装置: 今のモデルより少ないレース数で学習した結果では上書きしない（--force で強制）
+    model_path = os.path.join(OUT_DIR, 'model_v104.json')
+    if os.path.exists(model_path) and '--force' not in sys.argv:
+        with open(model_path, encoding='utf-8') as f:
+            prev_n = json.load(f).get('trained_on', {}).get('races', 0)
+        if prev_n > len(races):
+            print(f'[skip] 既存モデル（{prev_n}レース）より学習レースが少ない（{len(races)}）ため、モデルとレポートを更新しません。'
+                  '収集リポジトリを --data で指定してください（強制する場合は --force）。')
+            sys.exit(0)
+    with open(model_path, 'w', encoding='utf-8') as f:
         json.dump(model_json, f, ensure_ascii=False, indent=1)
 
     # ---- 参照用: 1レース分の予測（ブラウザ版との一致確認用）
