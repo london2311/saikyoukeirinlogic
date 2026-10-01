@@ -166,6 +166,9 @@ def main():
     ap.add_argument('--ev', type=float, default=E.DEFAULTS['ev_min'])
     ap.add_argument('--all-types', action='store_true')
     args = ap.parse_args()
+    out = sys.stdout
+    if args.json:
+        sys.stdout = sys.stderr  # 取得ログ（GET ...）がJSONに混ざらないよう、JSON以外は標準エラーへ
     model = E.load_model()
 
     if args.scan:
@@ -184,7 +187,7 @@ def main():
                     mark = '✅' if res.get('ok') and not res.get('ken') else ('🛑' if res.get('ok') else '⚠')
                     print(f'{mark} {title}', flush=True)
         if args.json:
-            print(json.dumps(results, ensure_ascii=False, indent=1, default=float))
+            print(json.dumps(results, ensure_ascii=False, indent=1, default=float), file=out)
         else:
             hits = [r for r in results if r.get('ok') and not r.get('ken')]
             print(f'\n=== 勝負レース {len(hits)} / {len(results)} ===')
@@ -197,7 +200,7 @@ def main():
     cup = find_cup(args.venue, args.date)[0]
     title, res = run_one(model, cup, args.race, args)
     if args.json:
-        print(json.dumps(res, ensure_ascii=False, indent=1, default=float))
+        print(json.dumps(res, ensure_ascii=False, indent=1, default=float), file=out)
     else:
         print(E.format_text(res, title))
         if res.get('ok'):

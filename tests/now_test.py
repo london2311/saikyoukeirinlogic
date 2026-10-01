@@ -78,6 +78,7 @@ def main():
 
     def fake_fetch(url, interval=0):
         calls.append(url)
+        print(f'  GET {url}')  # 本物の fetch_html と同じく取得ログを出す（--json の出力を壊さないこと）
         wrap = lambda st: '<script>window.__PRELOADED_STATE__ = ' + json.dumps(st, ensure_ascii=False) + ';window.__X = 1</script>'
         if url.endswith('/keirin'):
             return wrap(top)
