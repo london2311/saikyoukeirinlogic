@@ -69,6 +69,8 @@ def load_all(root):
     paths = [p for p in glob.glob(os.path.join(root, '*')) + glob.glob(os.path.join(root, 'data', '**', '*'), recursive=True)
              if os.path.isfile(p) and os.path.getsize(p) > 0 and not p.endswith(('.py', '.html', '.md', '.json', '.txt'))]
     found = defaultdict(list)
+    # data/ 配下（収集スクリプトの正式な保存先）を後ろに並べ、重複時はそちらを優先する
+    paths.sort(key=lambda p: (os.sep + 'data' + os.sep in p, p))
     for p in paths:
         try:
             with open(p, encoding='utf-8-sig') as f:
@@ -110,6 +112,25 @@ RIDER_FEATURES = [
 ]
 PAIR2_FEATURES = ['follow', 'lead_back', 'same_line_other', 'follow_x_ban_quin']
 PAIR3_FEATURES = ['behind_b', 'behind_a', 'same_line_ab', 'ahead_of_b']
+BASE_RIDER_FEATURES = list(RIDER_FEATURES)
+BASE_PAIR2_FEATURES = list(PAIR2_FEATURES)
+# v105: 出走表の拡張列（直近4か月の S/B 回数・決まり手回数）がある場合に追加する特徴量。
+# いずれも「回数 ÷ 出走数(1着+2着+3着+着外)」をレース内で中心化した値。
+EXT_RIDER_FEATURES = ['s_rate', 'b_rate', 'k_nige', 'k_maku', 'k_sashi', 'k_mark']
+EXT_PAIR2_FEATURES = ['follow_x_lead_b']  # 先頭が1着の時の番手流れ込み × 先頭のB率
+USE_EXT = False
+
+
+def configure(use_ext):
+    """拡張特徴量を使うかどうかを切り替える（データに拡張列が9割以上ある時に有効化）"""
+    global USE_EXT, RIDER_FEATURES, PAIR2_FEATURES
+    USE_EXT = bool(use_ext)
+    RIDER_FEATURES = BASE_RIDER_FEATURES + (EXT_RIDER_FEATURES if USE_EXT else [])
+    PAIR2_FEATURES = BASE_PAIR2_FEATURES + (EXT_PAIR2_FEATURES if USE_EXT else [])
+
+
+def b_index():
+    return RIDER_FEATURES.index('b_rate') if USE_EXT else None
 
 
 def rider_matrix(riders, venue_pref):
@@ -128,10 +149,18 @@ def rider_matrix(riders, venue_pref):
         if r['line_pos'] == 1:
             head_pt[r['line_id']] = p
     n_nige = sum(1 for r in riders if r['style'] == '逃')
+    ext = None
+    if USE_EXT:
+        keys = ['s', 'b', 'k_nige', 'k_maku', 'k_sashi', 'k_mark']
+        raw = np.array([[(r.get(k, 0.0) / r['n4m']) if r.get('n4m', 0) > 0 else np.nan for k in keys] for r in riders], float)
+        col_mean = np.nanmean(np.where(np.isnan(raw), np.nan, raw), axis=0) if np.isfinite(raw).any() else np.zeros(len(keys))
+        col_mean = np.where(np.isnan(col_mean), 0.0, col_mean)
+        raw = np.where(np.isnan(raw), col_mean, raw)
+        ext = raw - raw.mean(axis=0)
     X = np.zeros((len(riders), len(RIDER_FEATURES)))
     for i, r in enumerate(riders):
         single = r['line_size'] <= 1
-        X[i] = [
+        row = [
             (pts[i] - pts.mean()) / 10.0,
             1.0 if pts[i] >= pts.max() else 0.0,
             rates[i, 0], rates[i, 1], rates[i, 2],
@@ -145,16 +174,22 @@ def rider_matrix(riders, venue_pref):
             (n_nige - 1.0) if r['style'] == '逃' else 0.0,
             1.0 if (venue_pref and r['pref'] == venue_pref) else 0.0,
         ]
+        if USE_EXT:
+            row += list(ext[i])
+        X[i] = row
     return X
 
 
-def pair2(ra, rj, quin_j):
+def pair2(ra, rj, quin_j, lead_b=0.0):
     same = ra['line_size'] > 1 and ra['line_id'] == rj['line_id']
     follow = same and rj['line_pos'] == ra['line_pos'] + 1
     lead_back = same and rj['line_pos'] == ra['line_pos'] - 1
-    return [1.0 if follow else 0.0, 1.0 if lead_back else 0.0,
-            1.0 if (same and not follow and not lead_back) else 0.0,
-            quin_j if (follow and ra['line_pos'] == 1) else 0.0]
+    v = [1.0 if follow else 0.0, 1.0 if lead_back else 0.0,
+         1.0 if (same and not follow and not lead_back) else 0.0,
+         quin_j if (follow and ra['line_pos'] == 1) else 0.0]
+    if USE_EXT:
+        v.append(lead_b if (follow and ra['line_pos'] == 1) else 0.0)
+    return v
 
 
 def pair3(ra, rb, rk):
@@ -169,6 +204,12 @@ def pair3(ra, rb, rk):
 
 
 # ------------------------------------------------------------ レース単位に整形
+def ext_fill_rate(cards):
+    if 'back_count' not in cards:
+        return 0.0
+    return float(pd.to_numeric(cards['back_count'], errors='coerce').notna().mean())
+
+
 def build_races(D):
     races = D['races']
     races = races[races.get('cancel', 0).fillna(0).astype(int) == 0]
@@ -195,12 +236,18 @@ def build_races(D):
         riders = []
         for r in g.sort_values('car_number').itertuples(index=False):
             single = int(r.is_single) == 1 if not pd.isna(r.is_single) else True
-            riders.append(dict(
+            rd = dict(
                 num=int(r.car_number), point=float(r.race_point or 0), first=float(r.first_rate or 0),
                 second=float(r.second_rate or 0), third=float(r.third_rate or 0), style=str(r.style),
                 line_id=('s%d' % r.car_number) if single else str(r.line_order),
                 line_pos=1 if single else int(r.line_position), line_size=1 if single else int(r.line_size),
-                pref=str(r.prefecture)))
+                pref=str(r.prefecture))
+            if USE_EXT:
+                f = lambda k: float(getattr(r, k)) if (hasattr(r, k) and not pd.isna(getattr(r, k))) else 0.0
+                rd.update(s=f('standing_count'), b=f('back_count'), k_nige=f('escape_count'), k_maku=f('makuri_count'),
+                          k_sashi=f('sashi_count'), k_mark=f('mark_count'),
+                          n4m=f('first_count') + f('second_count') + f('third_count') + f('out_count'))
+            riders.append(rd)
         nums = [r['num'] for r in riders]
         if len(riders) < 4 or any(n not in nums for n in top3[rid]):
             continue
@@ -245,7 +292,8 @@ def stage_sets(race_list, stage, feat_idx=None):
             sets.append((Xs, idx[a]))
         elif stage == 2:
             cand = [i for i in range(len(riders)) if i != idx[a]]
-            Z = np.array([np.concatenate([Xs[j], pair2(riders[idx[a]], riders[j], X[j, 3])]) for j in cand])
+            lb = X[idx[a], b_index()] if USE_EXT else 0.0
+            Z = np.array([np.concatenate([Xs[j], pair2(riders[idx[a]], riders[j], X[j, 3], lb)]) for j in cand])
             sets.append((Z, cand.index(idx[b])))
         else:
             cand = [i for i in range(len(riders)) if i not in (idx[a], idx[b])]
@@ -276,7 +324,8 @@ def predict_dist(model, R):
     dist = {}
     for a in range(n):
         cand2 = [j for j in range(n) if j != a]
-        u2 = np.array([base2[j] + np.dot(w2[d:], pair2(riders[a], riders[j], X[j, 3])) for j in cand2])
+        lb = X[a, b_index()] if USE_EXT else 0.0
+        u2 = np.array([base2[j] + np.dot(w2[d:], pair2(riders[a], riders[j], X[j, 3], lb)) for j in cand2])
         p2 = softmax(u2)
         for jj, b in enumerate(cand2):
             cand3 = [k for k in range(n) if k not in (a, b)]
@@ -410,13 +459,42 @@ def fit_fusion(races, odds_df, model_fn):
     for R in races:
         if R['race_id'] not in rows:
             continue
-        q = market_dist(R, rows[R['race_id']], tbl)
+        # λ較正テーブルは過去データ由来で検証期間と重なりうるため、比較は全方式とも
+        # 「3連単オッズの逆数を正規化した確率」を基準にそろえる（公平な比較のため）
+        q = market_dist(R, rows[R['race_id']], None)
         p = model_fn(R)
         if q and p:
             pairs.append((q, p, tuple(R['top3'])))
     if len(pairs) < 30:
         return {'races': len(pairs), 'alpha': None}
-    grid = [i / 20 for i in range(0, 21)]
+    # Benter型（着順全体の対数プール、α・βとも自由）: f ∝ q_raw^β · p^α を最尤推定
+    #   q_raw = 3連単オッズの逆数を正規化（λ較正なし）。本格バックテストで最も良かった方式。
+    raw_pairs = []
+    for R in races:
+        if R['race_id'] in rows:
+            qr = market_dist(R, rows[R['race_id']], None)
+            pr = model_fn(R)
+            if qr and pr:
+                keys = list(qr)
+                raw_pairs.append((np.log(np.maximum([pr.get(k, 0.0) for k in keys], 1e-12)),
+                                  np.log(np.maximum([qr[k] for k in keys], 1e-12)), keys.index(tuple(R['top3']))))
+
+    def nll(w):
+        f, g = 0.0, np.zeros(2)
+        for lp, lq, win in raw_pairs:
+            u = w[0] * lp + w[1] * lq
+            mx = u.max()
+            e = np.exp(u - mx)
+            z = e.sum()
+            pr = e / z
+            f -= u[win] - mx - math.log(z)
+            g -= np.array([lp[win] - pr @ lp, lq[win] - pr @ lq])
+        return f, g
+    rb = minimize(nll, np.array([0.3, 1.0]), jac=True, method='L-BFGS-B')
+    benter = {'alpha': float(rb.x[0]), 'beta': float(rb.x[1]), 'll': -float(rb.fun) / len(raw_pairs)}
+    if len(pairs) > 2000:  # 段階型/線形の格子探索は重いので標本で比較
+        pairs = [pairs[i] for i in np.random.default_rng(0).choice(len(pairs), 2000, replace=False)]
+    grid = [i / 10 for i in range(0, 11)]
     best = None
     curve = []
     for al in grid:
@@ -430,27 +508,46 @@ def fit_fusion(races, odds_df, model_fn):
             if best is None or row[ftype] > best[2]:
                 best = (ftype, al, row[ftype])
         curve.append((al, row['linear'], row['log']))
-    return {'races': len(pairs), 'type': best[0], 'alpha': best[1], 'curve': curve}
+    # 比較は同じ標本の上で行う（Benter型の推定値を標本で評価し直す）
+    tot = 0.0
+    for q, p, key in pairs:
+        keys = list(q)
+        u = np.array([benter['alpha'] * math.log(max(p.get(k, 0.0), 1e-12)) + benter['beta'] * math.log(max(q[k], 1e-12)) for k in keys])
+        mx = u.max()
+        tot += u[keys.index(key)] - mx - math.log(np.exp(u - mx).sum())
+    benter['ll_sample'] = tot / len(pairs)
+    out = {'races': len(raw_pairs), 'type': best[0], 'alpha': best[1], 'beta': 1 - best[1], 'curve': curve, 'benter': benter}
+    if benter['ll_sample'] >= best[2]:
+        out.update(type='benter', alpha=benter['alpha'], beta=benter['beta'])
+    return out
 
 
 # ------------------------------------------------------------ メイン
 def main():
-    D = load_all(ROOT)
+    data_root = ROOT
+    if '--data' in sys.argv:
+        data_root = os.path.abspath(sys.argv[sys.argv.index('--data') + 1])
+    D = load_all(data_root)
     for k in ('races', 'cards', 'results'):
         if k not in D:
             sys.exit(f'必要なCSVが見つかりません: {k}')
+    configure(ext_fill_rate(D['cards']) >= 0.9)
+    print(f'[features] 拡張特徴量(S/B・決まり手): {"使用" if USE_EXT else "なし"}')
     races = build_races(D)
     dates = sorted({R['date'] for R in races})
     print(f'[data] 学習可能レース {len(races)} / 期間 {dates[0]}〜{dates[-1]}（{len(dates)}日）')
 
-    # ---- ローリング検証: 後半の日を1日ずつテスト（それ以前の日だけで学習）
-    n_test_days = max(1, len(dates) // 2)
-    test_days = dates[-n_test_days:]
+    # ---- ローリング検証: 期間が短ければ後半の日を1日ずつ、長ければ直近3か月を1か月ずつテスト
+    #      （いずれも、テスト単位より前のデータだけで学習）
+    span = (pd.Timestamp(str(dates[-1])) - pd.Timestamp(str(dates[0]))).days
+    unit = (lambda d: d // 100) if span > 60 else (lambda d: d)
+    units = sorted({unit(d) for d in dates})
+    test_days = units[-3:] if span > 60 else units[-max(1, len(units) // 2):]
     pt_idx = [RIDER_FEATURES.index('pt')]
     pred = []  # (race, dist_full, dist_pt)
     for day in test_days:
-        train = [R for R in races if R['date'] < day]
-        test = [R for R in races if R['date'] == day]
+        train = [R for R in races if unit(R['date']) < day]
+        test = [R for R in races if unit(R['date']) == day]
         m_full = fit_model(train)
         m_pt = fit_model(train, pt_idx)
         for R in test:
@@ -534,7 +631,7 @@ def main():
     # ---- 全データで最終学習 → ブラウザ版用の係数
     final = fit_model(races)
     model_json = {
-        'version': 'v104',
+        'version': 'v105' if USE_EXT else 'v104',
         'trained_on': {'races': len(races), 'date_min': dates[0], 'date_max': dates[-1]},
         'rider_features': RIDER_FEATURES, 'pair2_features': PAIR2_FEATURES, 'pair3_features': PAIR3_FEATURES,
         'w1': [round(float(x), 5) for x in final['w1']],
@@ -542,10 +639,20 @@ def main():
         'w3': [round(float(x), 5) for x in final['w3']],
         'holdout': {'races': n_eval, 'logloss_3t': {k: round(-v, 4) for k, v in LL.items()}},
         'fusion_alpha': fusion['alpha'] if fusion else None,
+        'fusion_beta': fusion.get('beta') if fusion else None,
         'fusion_type': fusion.get('type') if fusion else None,
         'fusion_races': fusion['races'] if fusion else 0,
     }
-    with open(os.path.join(OUT_DIR, 'model_v104.json'), 'w', encoding='utf-8') as f:
+    # 安全装置: 今のモデルより少ないレース数で学習した結果では上書きしない（--force で強制）
+    model_path = os.path.join(OUT_DIR, 'model_v104.json')
+    if os.path.exists(model_path) and '--force' not in sys.argv:
+        with open(model_path, encoding='utf-8') as f:
+            prev_n = json.load(f).get('trained_on', {}).get('races', 0)
+        if prev_n > len(races):
+            print(f'[skip] 既存モデル（{prev_n}レース）より学習レースが少ない（{len(races)}）ため、モデルとレポートを更新しません。'
+                  '収集リポジトリを --data で指定してください（強制する場合は --force）。')
+            sys.exit(0)
+    with open(model_path, 'w', encoding='utf-8') as f:
         json.dump(model_json, f, ensure_ascii=False, indent=1)
 
     # ---- 参照用: 1レース分の予測（ブラウザ版との一致確認用）
@@ -562,7 +669,7 @@ def main():
     L = []
     L.append('# v104 統計モデル 検証レポート\n')
     L.append(f'- 学習データ: {len(races)}レース（{dates[0]}〜{dates[-1]}、{len(dates)}日）')
-    L.append(f'- 検証方式: ローリング（{test_days[0]}〜{test_days[-1]} の各日を、その前日までのデータだけで学習して予測）')
+    L.append(f'- 検証方式: ローリング（{test_days[0]}〜{test_days[-1]} の各{"月" if span > 60 else "日"}を、それより前のデータだけで学習して予測）')
     L.append(f'- 検証レース数: {n_eval}\n')
     L.append('## 予測精度（3連単の実際の着順に付けた確率の対数損失。小さいほど良い）\n')
     L.append('| モデル | 対数損失 | 一様比の改善 | 的中着順に付けた平均確率(幾何平均) |')
@@ -590,7 +697,10 @@ def main():
         L.append(f'| {bt} | {int(frac * 100)}% | {s["bets"]} | {fmt_pct(s["hits"] / s["bets"])} | {fmt_pct(s["roi"])} | {fmt_pct(s["pmin"])} |')
     L.append('\n## 市場融合の重み α\n')
     if fusion and fusion['alpha'] is not None:
-        L.append(f'オッズと結果が揃った {fusion["races"]} レースで推定: **{fusion["type"]} プール, α = {fusion["alpha"]:.2f}**（ブラウザ版の既定値に反映）\n')
+        L.append(f'オッズと結果が揃った {fusion["races"]} レースで推定: **{fusion["type"]} 型, α = {fusion["alpha"]:.3f}, β = {fusion["beta"]:.3f}**（ブラウザ版の既定値に反映）\n')
+        bt = fusion.get('benter')
+        if bt:
+            L.append(f'- Benter型（f ∝ 市場^β × モデル^α）: α = {bt["alpha"]:.3f}, β = {bt["beta"]:.3f}, 平均対数尤度 {bt["ll"]:.4f}\n')
         L.append('| α | 線形プール 平均対数尤度 | 対数プール 平均対数尤度 |')
         L.append('|---:|---:|---:|')
         for al, v1, v2 in fusion['curve']:

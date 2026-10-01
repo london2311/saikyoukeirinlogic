@@ -203,7 +203,10 @@ def parse_schedule(state: dict, target_date: str) -> list:
     """対象日(YYYYMMDD)に開催中の開催(cup)一覧を返す。
     トップページ(/keirin)のステートから抽出する。"""
     cups = {}
-    _scan_for_cups(state, cups)
+    # トップページにはオートレースの開催も入っている（会場ID 2〜6）ので、競輪のクエリだけを見る
+    queries = state.get("tanStackQuery", {}).get("queries", [])
+    keirin = [q for q in queries if not str((q.get("queryKey") or [""])[0]).startswith("autorace")]
+    _scan_for_cups(keirin if queries else state, cups)
     out = []
     for cup in cups.values():
         if cup["startDate"] <= target_date <= cup["endDate"]:
@@ -373,6 +376,7 @@ def _range(v):
 ODDS_VALUE_KEYS = ("odds", "oddsValue", "value")
 ODDS_MIN_KEYS = ("minOdds", "oddsMin", "lowerOdds", "lowOdds", "minimumOdds", "odds", "oddsValue")
 ODDS_MAX_KEYS = ("maxOdds", "oddsMax", "upperOdds", "highOdds", "maximumOdds")
+PLACEHOLDER_ODDS = 9999.9  # 投票が未集計のうちは全組がこの倍率・人気順0で表示される
 
 
 def _debug_odds_keys_once(bet_key: str, item: dict):
@@ -430,6 +434,9 @@ def parse_odds(state: dict) -> list:
                 lo = payoff / 100.0
             if lo is None and payoff:
                 lo = payoff / 100.0
+            # 発走前の仮表示（9999.9倍・人気順0）は実際のオッズではないので「倍率なし」にする
+            if lo is not None and lo >= PLACEHOLDER_ODDS and not o.get("popularityOrder") and not payoff:
+                lo = hi = None
 
             absent = o.get("absent", False)
             rows.append({
