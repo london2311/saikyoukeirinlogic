@@ -1,0 +1,43 @@
+# 毎週、集まったデータでモデルを再学習し、index.html（GitHub Pages）の係数を更新する。
+# オッズと結果がそろったレースが30以上あれば、融合方式と重みαも自動推定される。
+name: keirin-train
+
+on:
+  schedule:
+    - cron: "37 22 * * 0"  # 毎週月曜 07:37 JST
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: keirin-data
+  cancel-in-progress: false
+
+jobs:
+  train:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: 学習・検証・埋め込み
+        run: |
+          pip install --quiet pandas numpy scipy
+          python analysis/check_data.py | tail -8
+          python analysis/train_model.py --embed
+      - name: テスト
+        run: node tests/engine_test.js
+      - name: コミット
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add analysis index.html
+          if git diff --cached --quiet; then echo "変更なし"; exit 0; fi
+          git commit -m "model: 週次再学習 $(date -u -d '+9 hours' +%Y-%m-%d)"
+          for i in 1 2 3; do git pull --rebase && git push && break; sleep 5; done

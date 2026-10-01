@@ -1,4 +1,40 @@
 <!--
+  競輪予想エンジン v104 変更履歴
+  ===========================================================
+  【実績学習モデル：過去1,470レースで最尤推定】2026/10/01
+    [1] analysis/train_model.py: 出走表・着順・払戻CSV（2026/06/10〜06/29, 1,470レース）から
+        段階型 条件付きロジット（1着 → 2着|1着 → 3着|1・2着）を最尤推定。
+        特徴量はブラウザ版でも計算できるものに限定（得点・勝率・2連対率・3連対率・脚質・
+        ライン位置・ライン平均得点・番手の先頭得点・逃げ競合・地元）。2着/3着はライン関係
+        （番手の流れ込み、番手差し後の先行残り、3番手の続き等）を個別係数で評価。
+    [2] 日付順ローリング検証（706レース）: 3連単対数損失 一様5.361 / 得点のみ4.521 /
+        v104 4.419 / 市場4.119。本命1点買い回収率は2車単76.1%・2車複78.8%・ワイド71.8%で
+        市場1番人気（70.6%/73.6%/67.9%）を上回るが、単独では100%未満。
+    [3] v103統合エンジンのモデル側を v104 に変更（v102ロジック・両者の幾何平均にも切替可）。
+    [4] 融合方式の既定を線形プール（α=0.25）に変更。対数プールは両者が一致する本命の確率を
+        両者より大きく膨らませる性質があり、重みが未推定の段階では偽の妙味を生むため。
+        オッズと結果が30レース以上重なれば、学習スクリプトが線形/対数とαを自動推定して既定に反映。
+    [5] tests/engine_test.js: 確率整合・線形プールの範囲・見送り判定・ケリー解析解・Python一致を検証。
+
+  競輪予想エンジン v103 変更履歴
+  ===========================================================
+  【統合エンジン：市場融合 × 券種整合 × 一括ケリー】2026/10/01
+    [1] 市場分布: 3連単オッズを v102 実測λ（本命-大穴バイアス）で較正し、全着順の確率分布に正規化。
+        3連単が薄い場合は 2車単 / 三連複 / 2車複 ＋ モデルの条件付き着順で補完。
+    [2] 市場融合（Benter型 対数プーリング）: f ∝ 市場^β × モデル^α（既定 α=0.30, β=0.70）。
+        モデルは v102 の純モデル3連単分布（市場prior混合前）を使用。
+        α+β=1 のため、モデルと市場が一致すれば融合も市場と一致する（偽の妙味を出さない）。
+    [3] 券種整合: 全券種の確率を融合分布1本から集計。v102の max()ブレンドによる
+        券種間の確率矛盾を解消し、券種プール間の歪み（例: 2車単だけ割安）を検出。
+    [4] 一括ケリー: 全候補を同じ着順結果空間上で E[log資産] 最大化（射影勾配法）。
+        1-2-3 と 1-2 が同時に当たる相関を正しく扱う。既定は 1/4ケリー・1R資金5%上限・最大6点。
+        較正上限 κ を超える確率は有効オッズの縮小で反映し、過大賭けを防止。
+    [5] 見送り判定: 融合EV≥1.10 の候補がなければ「ケン」を推奨。
+    [UI] ③EV結果タブ上部に「🏆 v103 統合エンジン」パネル、結果表に「融合EV」列を追加。
+         設定（α/β/EV下限/オッズ上限/点数/資金/ケリー係数/1R上限）はブラウザに保存。
+    [互換] v102の較正EV・既存表示・学習ループはそのまま維持。
+    [残課題] α・β・κ を過去データの対数尤度最大化でフィット（P4/P5）、月別ローリング検証（P8）。
+
   競輪予想エンジン v102 変更履歴
   ===========================================================
   【現状データ採用版】2026/07/02
@@ -1344,7 +1380,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>競輪予想エンジン v102 現状データ較正版</title>
+<title>競輪予想エンジン v104 実績学習版</title>
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Noto+Sans+JP:wght@400;700;900&display=swap');
 :root{
@@ -1425,7 +1461,7 @@ textarea{resize:vertical}
 <body>
 <div class="app">
 <header>
-  <div class="logo">🚴 KEIRIN v102 <span>【現状データ較正＋特徴量補完データ採用】</span></div>
+  <div class="logo">🚴 KEIRIN v104 <span>【実績学習モデル×市場融合×一括ケリー】</span></div>
 </header>
 <input type="hidden" id="bankroll" value="30000">
 <div class="tabs">
@@ -1752,6 +1788,9 @@ textarea{resize:vertical}
     <div class="sumcard"><div class="sumcard-val" id="s-avg" style="color:var(--text)">-</div><div class="sumcard-label">平均EV</div></div>
   </div>
 
+  <!-- v103: 統合エンジン（市場融合 × 券種整合 × 一括ケリー） -->
+  <div id="v103-section" style="display:none"></div>
+
   <!-- 合成オッズパネル -->
   <div class="card" style="border-color:#f5b73166;margin-bottom:12px">
     <div class="ct" style="color:var(--gold)">▸ 選択した買い目の合成オッズ・合成期待値</div>
@@ -1878,6 +1917,7 @@ textarea{resize:vertical}
         <th style="text-align:left">組み合わせ</th><th>券種</th><th>オッズ</th>
         <th id="th-prob" style="cursor:pointer;user-select:none" onclick="toggleProbSort()" title="クリックで的中率降順ソート">的中確率 ↕</th>
         <th title="実測較正後のEV（=較正確率×オッズ）。較正前の理論EVは各行にマウスを置くと確認できます">較正EV</th>
+        <th title="v103統合エンジンの融合EV（市場較正確率×モデルの対数プーリング、全券種整合）">融合EV</th>
         <th title="券種別のEV閾値クリア状況">券種閾値</th>
         <th title="ハーフケリー基準による推奨賭け金（予算比%）">ハーフケリー</th>
       </tr></thead>
@@ -5918,6 +5958,23 @@ function calcEV() {
       results.push({...o, pcorr: cal.pCal, pBlend: p, pModelRaw, marketP: marketAdj.marketP, marketWeight: marketAdj.marketWeight, qCal: cal.qCal, ev, evRaw, calFactor: cal.calFactor, trustFactor: cal.calFactor});
     });
   }
+  // v103: 統合エンジン（純モデル3連単分布 × 較正市場分布の融合 → 全券種整合EV → 一括ケリー）
+  STATE.v103Input = { nums: allNums.slice(), modelProb3t: prob3t, allOdds, settings: v103ReadSettingsFromUI() };
+  try {
+    const mp = v103BuildModelProb(prob3t, STATE.v103Input.settings.modelKind);
+    STATE.v103Input.prob3tV102 = prob3t;
+    STATE.v103Input.modelProb3t = mp.fn;
+    STATE.v103Input.modelName = mp.name;
+    STATE.v103 = KEIRIN_V103.run(STATE.v103Input);
+  } catch (e) {
+    console.error('v103', e);
+    STATE.v103 = { ok: false, reason: '統合エンジンの計算でエラー: ' + e.message };
+  }
+  results.forEach(r => {
+    const t = STATE.v103 && STATE.v103.ok ? STATE.v103.evMap[r.type + ':' + r.nums.join('-')] : null;
+    r.evFused = t ? t.ev : null;
+    r.pFused = t ? t.pCap : null;
+  });
   STATE.calcResults=results;
 
   // ライン反映確認デバッグ
@@ -5945,6 +6002,7 @@ function calcEV() {
   dbEl.style.display='flex';
   dbEl.innerHTML='▸ 補正確認: '+posDebug;
   renderResult();
+  v103Render();
   go(2,null);
 }
 
@@ -6778,6 +6836,7 @@ function renderResult() {
       <td>${r.odds.toFixed(1)}倍</td>
       <td style="color:var(--muted)">${(r.pcorr*100).toFixed(2)}%</td>
       <td>${evDisp}</td>
+      <td>${Number.isFinite(r.evFused)?`<span class="${r.evFused>=1.5?'ev-s':r.evFused>=1.2?'ev-m':'ev-l'}" title="融合確率=${(r.pFused*100).toFixed(2)}%">${r.evFused.toFixed(3)}</span>`:'<span style="color:var(--muted)">-</span>'}</td>
       <td style="font-size:11px">${typeThCell}</td>
       <td>${kellyCell}</td>
     </tr>`;
@@ -6804,7 +6863,7 @@ function renderResult() {
     warns.push(`<div class="status st-warn" style="border-color:${rtypeColor}">🏁 ${rp.desc}</div>`);
   }
   if(avgEV>0.80) warns.push(`<div class="status st-warn">⚠ 全体EV平均${avgEV.toFixed(2)}>0.80 補正過多の可能性</div>`);
-  if(totalBet>maxBet) warns.push(`<div class="status st-warn">⚠ 合計推奨額が15%上限超過。上限適用済み</div>`);
+  // v103 Bugfix: 削除済み変数 totalBet の参照で ReferenceError となり、以降の警告表示・タブ遷移が止まっていたため除去。
   if(r.weather==='雨') warns.push(`<div class="status st-err">⚠ 雨天：捲り型の1着は大幅割引済み</div>`);
   // v101: 実測較正通知
   {
@@ -7486,6 +7545,644 @@ function checkHarai() {
 
   document.getElementById('harai-result').style.display = 'block';
   go(3, null);
+}
+</script>
+<script>
+// ============================================================
+// v104: 過去レース実績で学習した統計モデル（段階型 条件付きロジット）
+// ------------------------------------------------------------
+// analysis/train_model.py が出走表・着順・払戻CSVから最尤推定した係数で、
+// 全3連単の着順確率を計算する。特徴量は学習時と同一定義（得点・勝率・2連対率・
+// 3連対率・脚質・ライン位置・ライン平均得点・番手の先頭得点・逃げ競合・地元）。
+// 2着・3着はライン関係（番手の流れ込み、番手差し後の先行残り等）を段階的に評価。
+// 係数の更新: python3 analysis/train_model.py → analysis/model_v104.json を下の定数に貼り替え。
+// ============================================================
+const V104 = (() => {
+  function softmax(u) {
+    const mx = Math.max(...u);
+    const e = u.map(v => Math.exp(v - mx));
+    const s = e.reduce((t, v) => t + v, 0);
+    return e.map(v => v / s);
+  }
+  const dot = (w, x, off) => x.reduce((t, v, i) => t + w[off + i] * v, 0);
+  const mean = a => a.reduce((t, v) => t + v, 0) / a.length;
+
+  // riders: [{num, point, first, second, third(各%), style('逃'|'両'|'追'), line_id, line_pos(1始まり), line_size, pref}]
+  function riderMatrix(riders, venuePref) {
+    const raw = riders.map(r => Number(r.point) || 0);
+    const valid = raw.filter(v => v > 0);
+    const meanValid = valid.length ? mean(valid) : 80;
+    const pts = raw.map(v => (v > 0 ? v : meanValid - 10));
+    const ptMean = mean(pts), ptMax = Math.max(...pts);
+    const rates = riders.map(r => [r.first / 100, r.second / 100, r.third / 100]);
+    const rMean = [0, 1, 2].map(c => mean(rates.map(x => x[c])));
+    const linePts = {}, headPt = {};
+    riders.forEach((r, i) => {
+      (linePts[r.line_id] = linePts[r.line_id] || []).push(pts[i]);
+      if (r.line_pos === 1) headPt[r.line_id] = pts[i];
+    });
+    const nNige = riders.filter(r => r.style === '逃').length;
+    return riders.map((r, i) => {
+      const single = r.line_size <= 1;
+      const ban = !single && r.line_pos === 2;
+      return [
+        (pts[i] - ptMean) / 10,
+        pts[i] >= ptMax ? 1 : 0,
+        rates[i][0] - rMean[0], rates[i][1] - rMean[1], rates[i][2] - rMean[2],
+        r.style === '逃' ? 1 : 0,
+        r.style === '両' ? 1 : 0,
+        ban ? 1 : 0,
+        (!single && r.line_pos >= 3) ? 1 : 0,
+        single ? 1 : 0,
+        (mean(linePts[r.line_id]) - ptMean) / 10,
+        ban ? ((headPt[r.line_id] !== undefined ? headPt[r.line_id] : ptMean) - ptMean) / 10 : 0,
+        r.style === '逃' ? nNige - 1 : 0,
+        (venuePref && r.pref === venuePref) ? 1 : 0
+      ];
+    });
+  }
+  function pair2(ra, rj, quinJ) {
+    const same = ra.line_size > 1 && ra.line_id === rj.line_id;
+    const follow = same && rj.line_pos === ra.line_pos + 1;
+    const leadBack = same && rj.line_pos === ra.line_pos - 1;
+    return [follow ? 1 : 0, leadBack ? 1 : 0, (same && !follow && !leadBack) ? 1 : 0,
+      (follow && ra.line_pos === 1) ? quinJ : 0];
+  }
+  function pair3(ra, rb, rk) {
+    const sb = rb.line_size > 1 && rb.line_id === rk.line_id;
+    const sa = ra.line_size > 1 && ra.line_id === rk.line_id;
+    const behindB = sb && rk.line_pos === rb.line_pos + 1;
+    const behindA = sa && rk.line_pos === ra.line_pos + 1;
+    const aheadB = sb && rk.line_pos === rb.line_pos - 1;
+    return [behindB ? 1 : 0, (behindA && !behindB) ? 1 : 0,
+      ((sa || sb) && !behindB && !behindA && !aheadB) ? 1 : 0, aheadB ? 1 : 0];
+  }
+
+  // 全3連単の確率 { 'a-b-c': p }
+  function dist(model, riders, venuePref) {
+    const X = riderMatrix(riders, venuePref);
+    const n = riders.length, d = X[0].length;
+    const p1 = softmax(X.map(x => dot(model.w1, x, 0)));
+    const base2 = X.map(x => dot(model.w2, x, 0));
+    const base3 = X.map(x => dot(model.w3, x, 0));
+    const out = {};
+    for (let a = 0; a < n; a++) {
+      const c2 = []; for (let j = 0; j < n; j++) if (j !== a) c2.push(j);
+      const p2 = softmax(c2.map(j => base2[j] + dot(model.w2, pair2(riders[a], riders[j], X[j][3]), d)));
+      c2.forEach((b, jj) => {
+        const c3 = []; for (let k = 0; k < n; k++) if (k !== a && k !== b) c3.push(k);
+        const p3 = softmax(c3.map(k => base3[k] + dot(model.w3, pair3(riders[a], riders[b], riders[k]), d)));
+        c3.forEach((c, kk) => {
+          out[riders[a].num + '-' + riders[b].num + '-' + riders[c].num] = p1[a] * p2[jj] * p3[kk];
+        });
+      });
+    }
+    return out;
+  }
+
+  // ブラウザ版の STATE（出走表解析結果）→ 学習時と同じ形の選手データ
+  function ridersFromState(state) {
+    const lineups = state.lineups || [];
+    return (state.players || []).map(p => {
+      const total = Number(p.totalRaces) || ((p.w1 || 0) + (p.w2 || 0) + (p.w3 || 0));
+      const w1 = p.w1 || 0, w2 = p.w2 || 0, w3 = p.w3 || 0;
+      const line = (p.lineIdx >= 0 && lineups[p.lineIdx]) ? lineups[p.lineIdx] : null;
+      const single = !line || line.length <= 1;
+      const pace = p.pace || 'unknown';
+      const style = pace === 'nige' ? '逃'
+        : (pace === 'maku' || pace === 'ryou' || pace === 'jiriki') ? '両' : '追';
+      return {
+        num: p.num, point: Number(p.score) || 0,
+        first: total > 0 ? 100 * w1 / total : 0,
+        second: total > 0 ? 100 * (w1 + w2) / total : 0,
+        third: total > 0 ? 100 * (w1 + w2 + w3) / total : 0,
+        style,
+        line_id: single ? 's' + p.num : 'L' + p.lineIdx,
+        line_pos: single ? 1 : (p.pos + 1),
+        line_size: single ? 1 : line.length,
+        pref: p.region || ''
+      };
+    });
+  }
+  return { dist, ridersFromState, riderMatrix };
+})();
+// 学習済み係数（analysis/model_v104.json と同一）
+const KEIRIN_V104_MODEL = {"version":"v104","trained_on":{"races":1470,"date_min":20260610,"date_max":20260629},"rider_features":["pt","pt_top","win","quin","trio","nige","ryou","ban","pos3","single","line_pt","head_pt_ban","nige_comp","home"],"pair2_features":["follow","lead_back","same_line_other","follow_x_ban_quin"],"pair3_features":["behind_b","behind_a","same_line_ab","ahead_of_b"],"w1":[1.3469,0.06482,1.37693,0.82304,0.62076,1.01511,0.60744,0.7219,-0.2447,-0.10686,0.15165,0.44681,0.05144,0.30775],"w2":[1.22827,-0.0564,0.59958,0.15213,1.10713,0.45898,0.09489,0.2234,-0.15871,-0.08797,0.34012,-0.08611,-0.15943,0.13491,1.49731,1.55581,-0.05427,-0.41867],"w3":[0.98645,-0.04317,-0.06858,0.37886,0.80409,0.24025,0.00265,-0.07043,-0.04191,0.09489,0.14574,-0.14724,-0.12369,0.08839,1.20476,1.34408,0.76951,0.7334],"holdout":{"races":706,"logloss_3t":{"uniform":5.3614,"pt":4.5213,"full":4.419,"market":4.1187}},"fusion_alpha":null,"fusion_type":null,"fusion_races":0};
+
+// ============================================================
+// v103: 統合エンジン（市場融合 × 券種整合 × 一括ケリー）
+// ------------------------------------------------------------
+// [1] 市場分布: 3連単オッズ(最も深いプール)を v102 実測λで本命-大穴バイアス補正し、
+//     全着順(n·(n-1)·(n-2)通り)の確率分布 q に正規化。3連単が薄い時は
+//     2車単/2車複/三連複 + モデルの条件付き着順で補完。
+// [2] 市場融合(Benter 1994 の条件付きロジット): f ∝ q^β · p^α
+//     p = 既存v102モデルの3連単分布（市場prior混合前の純モデル）。
+//     （1着→2着→3着の段階ごとにプール）α=モデルの信頼度, β=市場の信頼度。α+β=1 の
+//     対数プーリング。α+β>1 は本命側へ分布を尖らせる）は暫定値で、
+//     過去データの対数尤度最大化で再フィットする前提。
+// [3] 券種整合: 全券種の確率を融合分布 f 1本から集計（3連複=6順列和、
+//     2車単=3着周辺和、ワイド=両者3着内の和）。v102の max()ブレンドによる
+//     券種間の確率矛盾を解消し、プール間の歪み（例: 2車単だけ割安）を検出できる。
+// [4] 一括ケリー: 全券種の候補を「同じ着順結果空間」上で同時に最適化
+//     （E[log 資産] 最大化、凹問題を射影勾配法で解く）。同一レース内の
+//     買い目同士の相関（1-2-3 と 1-2 は同時に当たる）を正しく扱う。
+//     v101の較正上限 κ を超える確率は有効オッズの縮小で反映（過大賭け防止）。
+// [5] 見送り判定: 条件を満たす候補がなければ「ケン」を推奨。
+// ============================================================
+const KEIRIN_V103 = (() => {
+  const DEFAULTS = {
+    // モデル重み α: 過去データで推定済みならその値、未推定なら暫定0.25
+    //   （v104モデルは単独では市場より対数損失が約0.3悪いため控えめに設定）
+    alpha: (typeof KEIRIN_V104_MODEL !== 'undefined' && Number.isFinite(KEIRIN_V104_MODEL.fusion_alpha)) ? KEIRIN_V104_MODEL.fusion_alpha : 0.25,
+    beta: (typeof KEIRIN_V104_MODEL !== 'undefined' && Number.isFinite(KEIRIN_V104_MODEL.fusion_alpha)) ? 1 - KEIRIN_V104_MODEL.fusion_alpha : 0.75,
+    // 融合方式: linear=線形プール（安全側の既定）/ log=段階型対数プール（Benter型）。
+    //   対数プールは両者が一致する本命を膨らませる性質があるため、過去データで優位と確認された場合のみ既定にする。
+    fusionType: (typeof KEIRIN_V104_MODEL !== 'undefined' && KEIRIN_V104_MODEL.fusion_type === 'log') ? 'log' : 'linear',
+    modelKind: 'v104', // 融合に使うモデル: v104=統計モデル / v102=既存ロジック / blend=両者の幾何平均
+    evMin: 1.10,       // 候補とする融合EVの下限
+    pMin: 0.005,       // 候補とする融合確率の下限（超大穴の除外）
+    oddsMax: 300,      // 候補とするオッズ上限（λが急落する帯を除外）
+    kellyFrac: 0.25,   // フラクショナル・ケリー係数（1/4ケリー）
+    maxExposure: 0.05, // 1レースの最大投資比率（資金比）
+    bankroll: 30000,   // 資金（円）
+    unit: 100,         // 最小購入単位（円）
+    maxBets: 6,        // 最大点数
+    kappa: 2.0         // 較正上限（v101と同義）
+  };
+  const TYPES = ['3連単', '三連複', '2車単', '2車複', 'ワイド'];
+
+  function typeAlias(type) { return type === '三連複' ? '3連複' : type; }
+
+  // v102実測λ（本命-大穴バイアス）。log-log線形補間。
+  function lambda(type, odds) {
+    const cal = (typeof KEIRIN_V101_ODDS_CAL !== 'undefined') ? KEIRIN_V101_ODDS_CAL : null;
+    const tbl = cal && cal.lambda && cal.lambda[typeAlias(type)];
+    if (!tbl || !tbl.length) return 1.0;
+    const x = Math.log(Math.max(1.01, odds));
+    if (x <= Math.log(tbl[0][0])) return tbl[0][1];
+    for (let i = 0; i < tbl.length - 1; i++) {
+      const x1 = Math.log(tbl[i + 1][0]);
+      if (x <= x1) {
+        const x0 = Math.log(tbl[i][0]);
+        return tbl[i][1] + (tbl[i + 1][1] - tbl[i][1]) * (x - x0) / (x1 - x0);
+      }
+    }
+    return tbl[tbl.length - 1][1];
+  }
+  function takeout() {
+    return (typeof KEIRIN_V101_ODDS_CAL !== 'undefined' && KEIRIN_V101_ODDS_CAL.meta && KEIRIN_V101_ODDS_CAL.meta.takeout) || 0.75;
+  }
+  // 実測較正済みの市場含意確率（そのオッズ帯の買い目が実際に当たってきた確率）
+  function calImplied(type, odds) {
+    if (!(odds > 1.0)) return null;
+    return takeout() / odds * lambda(type, odds);
+  }
+
+  function outcomes(nums) {
+    const out = [];
+    for (const a of nums) for (const b of nums) {
+      if (b === a) continue;
+      for (const c of nums) {
+        if (c === a || c === b) continue;
+        out.push([a, b, c]);
+      }
+    }
+    return out;
+  }
+  const k3 = (a, b, c) => a + '-' + b + '-' + c;
+  const k2 = (a, b) => a + '-' + b;
+  const kSet = arr => [...arr].sort((x, y) => x - y).join('=');
+
+  function normalize(w) {
+    const s = w.reduce((t, v) => t + v, 0);
+    return s > 0 ? w.map(v => v / s) : null;
+  }
+
+  // 券種ごとのオッズ表（同一組み合わせは最初の1件）
+  function indexOdds(allOdds) {
+    const idx = {};
+    TYPES.forEach(t => { idx[t] = {}; });
+    (allOdds || []).forEach(o => {
+      if (!o || !idx[o.type] || !(o.odds >= 1.0)) return;
+      const n = o.nums;
+      const key = (o.type === '3連単') ? k3(n[0], n[1], n[2])
+        : (o.type === '2車単') ? k2(n[0], n[1])
+        : kSet(n);
+      if (!(key in idx[o.type])) idx[o.type][key] = o.odds;
+    });
+    return idx;
+  }
+
+  // 未掲載の組み合わせ（＝売れていない超大穴）の重み: 掲載分の最小値の半分
+  function fillMissing(vals) {
+    const present = vals.filter(v => v !== null);
+    const minV = present.length ? Math.min(...present) : 1e-6;
+    return vals.map(v => (v === null ? minV * 0.5 : v));
+  }
+
+  // [1] 市場分布
+  function marketDist(nums, outs, oddsIdx, modelDist) {
+    const N = outs.length;
+    const nPairs = nums.length * (nums.length - 1);
+    // モデルの条件付き 3着分布 P(c | a,b) と 着順内訳
+    const pairMass = {};
+    outs.forEach((o, i) => { const kk = k2(o[0], o[1]); pairMass[kk] = (pairMass[kk] || 0) + modelDist[i]; });
+    const setMass = {};
+    outs.forEach((o, i) => { const kk = kSet(o); setMass[kk] = (setMass[kk] || 0) + modelDist[i]; });
+    const pairSetMass = {};
+    Object.keys(pairMass).forEach(kk => {
+      const [a, b] = kk.split('-').map(Number);
+      const ks = kSet([a, b]);
+      pairSetMass[ks] = (pairSetMass[ks] || 0) + pairMass[kk];
+    });
+    const condThird = i => { const o = outs[i]; const m = pairMass[k2(o[0], o[1])]; return m > 0 ? modelDist[i] / m : 0; };
+
+    const t3 = oddsIdx['3連単'];
+    const cover3t = outs.filter(o => k3(o[0], o[1], o[2]) in t3).length;
+    if (cover3t >= N * 0.6) {
+      const w = fillMissing(outs.map(o => { const od = t3[k3(o[0], o[1], o[2])]; return od ? calImplied('3連単', od) : null; }));
+      return { q: normalize(w), source: '3連単', coverage: cover3t / N };
+    }
+    const t2 = oddsIdx['2車単'];
+    const cover2t = Object.keys(t2).length;
+    if (cover2t >= nPairs * 0.6) {
+      const pw = {};
+      const keys = []; nums.forEach(a => nums.forEach(b => { if (a !== b) keys.push(k2(a, b)); }));
+      const vals = fillMissing(keys.map(kk => (t2[kk] ? calImplied('2車単', t2[kk]) : null)));
+      keys.forEach((kk, j) => { pw[kk] = vals[j]; });
+      const w = outs.map((o, i) => pw[k2(o[0], o[1])] * condThird(i));
+      return { q: normalize(w), source: '2車単＋モデル3着', coverage: cover2t / nPairs };
+    }
+    const t3f = oddsIdx['三連複'];
+    const nSets = Object.keys(setMass).length;
+    const cover3f = Object.keys(t3f).length;
+    if (cover3f >= nSets * 0.6) {
+      const keys = Object.keys(setMass);
+      const vals = fillMissing(keys.map(kk => (t3f[kk] ? calImplied('三連複', t3f[kk]) : null)));
+      const sw = {}; keys.forEach((kk, j) => { sw[kk] = vals[j]; });
+      const w = outs.map((o, i) => { const ks = kSet(o); return setMass[ks] > 0 ? sw[ks] * modelDist[i] / setMass[ks] : 0; });
+      return { q: normalize(w), source: '三連複＋モデル着順', coverage: cover3f / nSets };
+    }
+    const t2f = oddsIdx['2車複'];
+    const cover2f = Object.keys(t2f).length;
+    if (cover2f >= (nPairs / 2) * 0.6) {
+      const keys = Object.keys(pairSetMass);
+      const vals = fillMissing(keys.map(kk => (t2f[kk] ? calImplied('2車複', t2f[kk]) : null)));
+      const sw = {}; keys.forEach((kk, j) => { sw[kk] = vals[j]; });
+      const w = outs.map((o, i) => {
+        const ks = kSet([o[0], o[1]]);
+        return pairSetMass[ks] > 0 ? sw[ks] * (pairMass[k2(o[0], o[1])] / pairSetMass[ks]) * condThird(i) : 0;
+      });
+      return { q: normalize(w), source: '2車複＋モデル着順', coverage: cover2f / (nPairs / 2) };
+    }
+    return null;
+  }
+
+  // [2] Benter型融合（段階ごとの対数プーリング）
+  //   1着: f1(a) ∝ q1(a)^β·p1(a)^α / 2着: f2(b|a) ∝ q(b|a)^β·p(b|a)^α / 3着: f3(c|a,b) 同様
+  //   着順全体を一度にプールすると、両者が「1着」で一致し2・3着で割れる時に
+  //   本命の1着率が両者より高く膨らむ（偽の妙味）ため、段階ごとに融合する。
+  function fuse(q, p, alpha, beta, outs, type) {
+    if (type !== 'log') {
+      // 線形プール（既定）: f = β·q + α·p。周辺確率が常に両者の間に収まり、偽の妙味を生まない。
+      return normalize(q.map((qi, i) => beta * qi + alpha * p[i]));
+    }
+    if (!outs) {
+      const logw = q.map((qi, i) => beta * Math.log(Math.max(qi, 1e-12)) + alpha * Math.log(Math.max(p[i], 1e-12)));
+      const mx = Math.max(...logw);
+      return normalize(logw.map(v => Math.exp(v - mx)));
+    }
+    const marg = (dist, keyFn) => { const m = {}; outs.forEach((o, i) => { const kk = keyFn(o); m[kk] = (m[kk] || 0) + dist[i]; }); return m; };
+    const q1 = marg(q, o => o[0]), p1 = marg(p, o => o[0]);
+    const q12 = marg(q, o => o[0] + '-' + o[1]), p12 = marg(p, o => o[0] + '-' + o[1]);
+    const lp = (x, y) => beta * Math.log(Math.max(x, 1e-15)) + alpha * Math.log(Math.max(y, 1e-15));
+    const poolGroup = (keys, groupFn, logFn) => {   // グループ内で正規化した段階確率
+      const res = {}, groups = {};
+      keys.forEach(kk => { (groups[groupFn(kk)] = groups[groupFn(kk)] || []).push(kk); });
+      Object.values(groups).forEach(g => {
+        const lw = g.map(logFn); const mx = Math.max(...lw);
+        const e = lw.map(v => Math.exp(v - mx)); const sum = e.reduce((t, v) => t + v, 0);
+        g.forEach((kk, j) => { res[kk] = e[j] / sum; });
+      });
+      return res;
+    };
+    const f1 = poolGroup(Object.keys(q1), () => '', a => lp(q1[a], p1[a]));
+    const f2 = poolGroup(Object.keys(q12), kk => kk.split('-')[0], kk => {
+      const a = kk.split('-')[0];
+      return lp(q12[kk] / Math.max(q1[a], 1e-15), p12[kk] / Math.max(p1[a], 1e-15));
+    });
+    const keys3 = outs.map(o => o.join('-'));
+    const idx3 = {}; keys3.forEach((kk, i) => { idx3[kk] = i; });
+    const f3 = poolGroup(keys3, kk => kk.split('-').slice(0, 2).join('-'), kk => {
+      const ab = kk.split('-').slice(0, 2).join('-'); const i = idx3[kk];
+      return lp(q[i] / Math.max(q12[ab], 1e-15), p[i] / Math.max(p12[ab], 1e-15));
+    });
+    return normalize(outs.map(o => f1[o[0]] * f2[o[0] + '-' + o[1]] * f3[o.join('-')]));
+  }
+
+  // [3] 1枚の買い目が当たる着順結果の添字集合
+  function winningOutcomes(type, nums, outs) {
+    const res = [];
+    outs.forEach((o, i) => {
+      let hit = false;
+      if (type === '3連単') hit = o[0] === nums[0] && o[1] === nums[1] && o[2] === nums[2];
+      else if (type === '三連複') hit = nums.length === 3 && nums.every(n => o.includes(n));
+      else if (type === '2車単') hit = o[0] === nums[0] && o[1] === nums[1];
+      else if (type === '2車複') hit = (o[0] === nums[0] && o[1] === nums[1]) || (o[0] === nums[1] && o[1] === nums[0]);
+      else if (type === 'ワイド') hit = o.includes(nums[0]) && o.includes(nums[1]);
+      if (hit) res.push(i);
+    });
+    return res;
+  }
+
+  // [4] 一括ケリー: max Σ_o f_o·log(1 − Σs + Σ s_b·odds_b·[o∈W_b])
+  function multiKelly(cands, f) {
+    const B = cands.length;
+    if (!B) return [];
+    const N = f.length;
+    // 結果ごとに当たる候補リスト
+    const hitBy = Array.from({ length: N }, () => []);
+    cands.forEach((c, b) => c.win.forEach(i => hitBy[i].push(b)));
+    let s = new Array(B).fill(0);
+    const wealth = st => {
+      const S = st.reduce((t, v) => t + v, 0);
+      const W = new Array(N).fill(1 - S);
+      for (let i = 0; i < N; i++) for (const b of hitBy[i]) W[i] += st[b] * cands[b].oddsEff;
+      return W;
+    };
+    const growth = st => {
+      const W = wealth(st);
+      let g = 0;
+      for (let i = 0; i < N; i++) { if (f[i] <= 0) continue; if (W[i] <= 0) return -Infinity; g += f[i] * Math.log(W[i]); }
+      return g;
+    };
+    let g = growth(s);
+    let lr = 0.05;
+    for (let it = 0; it < 3000 && lr > 1e-7; it++) {
+      const W = wealth(s);
+      const grad = new Array(B).fill(0);
+      for (let i = 0; i < N; i++) {
+        if (f[i] <= 0) continue;
+        const inv = f[i] / W[i];
+        for (let b = 0; b < B; b++) grad[b] -= inv;
+        for (const b of hitBy[i]) grad[b] += inv * cands[b].oddsEff;
+      }
+      const next = s.map((v, b) => Math.max(0, v + lr * grad[b]));
+      const S = next.reduce((t, v) => t + v, 0);
+      if (S > 0.95) for (let b = 0; b < B; b++) next[b] *= 0.95 / S;
+      const g2 = growth(next);
+      if (g2 >= g - 1e-15) {
+        const moved = next.reduce((t, v, b) => t + Math.abs(v - s[b]), 0);
+        s = next; g = g2; lr *= 1.2;
+        if (moved < 1e-10) break;
+      } else {
+        lr *= 0.5;
+      }
+    }
+    return s;
+  }
+
+  function run(input) {
+    const opt = Object.assign({}, DEFAULTS, input.settings || {});
+    const nums = [...input.nums].sort((a, b) => a - b);
+    if (nums.length < 3) return { ok: false, reason: '出走3車未満' };
+    const outs = outcomes(nums);
+    const p = normalize(outs.map(o => Math.max(0, Number(input.modelProb3t(o[0], o[1], o[2])) || 0)));
+    if (!p) return { ok: false, reason: 'モデル確率が計算できません' };
+    const oddsIdx = indexOdds(input.allOdds);
+    const mk = marketDist(nums, outs, oddsIdx, p);
+    if (!mk || !mk.q) return { ok: false, reason: '市場分布を作るのに十分なオッズがありません（3連単の全体貼り付けを推奨）' };
+    const f = fuse(mk.q, p, opt.alpha, opt.beta, outs, opt.fusionType);
+
+    // 各車の1着率・3着内率（モデル / 市場 / 融合）
+    const riders = nums.map(n => ({ num: n, win: { model: 0, market: 0, fused: 0 }, top3: 0 }));
+    const rIdx = {}; riders.forEach((r, j) => { rIdx[r.num] = j; });
+    outs.forEach((o, i) => {
+      const r = riders[rIdx[o[0]]];
+      r.win.model += p[i]; r.win.market += mk.q[i]; r.win.fused += f[i];
+      o.forEach(n => { riders[rIdx[n]].top3 += f[i]; });
+    });
+
+    // 全買い目の融合確率・融合EV
+    const tickets = (input.allOdds || []).filter(o => o && TYPES.includes(o.type) && o.odds >= 1.0 &&
+      o.nums.length === ((o.type === '3連単' || o.type === '三連複') ? 3 : 2) &&
+      o.nums.every(n => n in rIdx) && new Set(o.nums).size === o.nums.length).map(o => {
+      const win = winningOutcomes(o.type, o.nums, outs);
+      const pF = win.reduce((t, i) => t + f[i], 0);
+      const qMk = win.reduce((t, i) => t + mk.q[i], 0);
+      const qc = calImplied(o.type, o.odds);
+      const pCap = qc ? Math.min(pF, opt.kappa * qc) : pF;
+      return {
+        type: o.type, nums: o.nums, odds: o.odds, win,
+        pFused: pF, pMarket: qMk, pCap,
+        ev: pCap * o.odds,
+        edge: qMk > 0 ? pF / qMk : null,
+        oddsEff: pF > 0 ? o.odds * pCap / pF : o.odds
+      };
+    });
+    const evMap = {};
+    tickets.forEach(t => { evMap[t.type + ':' + t.nums.join('-')] = t; });
+
+    // 候補 → 一括ケリー
+    const cands = tickets
+      .filter(t => t.ev >= opt.evMin && t.pCap >= opt.pMin && t.odds <= opt.oddsMax)
+      .sort((a, b) => b.ev - a.ev)
+      .slice(0, 15);
+    const s = multiKelly(cands, f);
+    let bets = cands.map((c, b) => Object.assign({}, c, { kelly: s[b] }))
+      .filter(c => c.kelly > 1e-6)
+      .sort((a, b) => b.kelly - a.kelly)
+      .slice(0, opt.maxBets);
+    let fracTotal = bets.reduce((t, c) => t + c.kelly * opt.kellyFrac, 0);
+    const scale = fracTotal > opt.maxExposure ? opt.maxExposure / fracTotal : 1;
+    bets.forEach(c => {
+      const yen = c.kelly * opt.kellyFrac * scale * opt.bankroll;
+      c.stake = Math.round(yen / opt.unit) * opt.unit;
+    });
+    // 丸めで0円になった買い目は、ケリー比率が最大の1点に限り最小単位を許容
+    if (bets.length && bets.every(c => c.stake === 0)) bets[0].stake = opt.unit;
+    bets = bets.filter(c => c.stake > 0);
+
+    // ポートフォリオ評価（較正上限込みの有効オッズで期待値、実オッズで払戻）
+    const stake = bets.reduce((t, c) => t + c.stake, 0);
+    let expRet = 0, hitProb = 0;
+    const pay = new Array(outs.length).fill(0), payEff = new Array(outs.length).fill(0);
+    bets.forEach(c => c.win.forEach(i => { pay[i] += c.stake * c.odds; payEff[i] += c.stake * c.oddsEff; }));
+    outs.forEach((o, i) => { expRet += f[i] * payEff[i]; if (pay[i] > 0) hitProb += f[i]; });
+    const maxPay = pay.length ? Math.max(...pay) : 0;
+
+    // 融合分布上の本命着順トップ5
+    const topOutcomes = outs.map((o, i) => ({ o, p: f[i] })).sort((a, b) => b.p - a.p).slice(0, 5);
+
+    return {
+      ok: true, settings: opt, source: mk.source, coverage: mk.coverage, modelName: input.modelName || 'モデル',
+      riders, tickets, evMap, bets, topOutcomes,
+      portfolio: { stake, expRet, roi: stake > 0 ? expRet / stake : 0, hitProb, maxPay },
+      ken: bets.length === 0
+    };
+  }
+
+  return { DEFAULTS, run, lambda, calImplied, outcomes, fuse, multiKelly, winningOutcomes };
+})();
+
+// ---------------- v103 UI ----------------
+const V103_SETTING_KEYS = ['alpha', 'beta', 'evMin', 'kellyFrac', 'maxExposure', 'bankroll', 'oddsMax', 'maxBets'];
+function v103LoadSettings() {
+  const s = Object.assign({}, KEIRIN_V103.DEFAULTS);
+  try {
+    const saved = JSON.parse(localStorage.getItem('keirin_v103_settings') || '{}');
+    V103_SETTING_KEYS.forEach(k => { if (Number.isFinite(saved[k])) s[k] = saved[k]; });
+    if (['v104', 'v102', 'blend'].includes(saved.modelKind)) s.modelKind = saved.modelKind;
+    if (['linear', 'log'].includes(saved.fusionType)) s.fusionType = saved.fusionType;
+  } catch (e) { /* ストレージ不可でも既定値で動作 */ }
+  return s;
+}
+function v103ReadSettingsFromUI() {
+  const s = v103LoadSettings();
+  V103_SETTING_KEYS.forEach(k => {
+    const el = document.getElementById('v103-' + k);
+    if (el && el.value !== '' && Number.isFinite(Number(el.value))) s[k] = Number(el.value);
+  });
+  const mk = document.getElementById('v103-modelKind');
+  if (mk) s.modelKind = mk.value;
+  const ft = document.getElementById('v103-fusionType');
+  if (ft) s.fusionType = ft.value;
+  try { localStorage.setItem('keirin_v103_settings', JSON.stringify(s)); } catch (e) { /* noop */ }
+  return s;
+}
+// 融合に使うモデル側の3連単確率関数を作る
+function v103BuildModelProb(prob3tV102, kind) {
+  let d104 = null;
+  if (kind !== 'v102' && typeof V104 !== 'undefined' && typeof KEIRIN_V104_MODEL !== 'undefined') {
+    const venuePref = (typeof VENUE_PREFECTURE !== 'undefined' && STATE.race) ? VENUE_PREFECTURE[STATE.race.venue] : null;
+    d104 = V104.dist(KEIRIN_V104_MODEL, V104.ridersFromState(STATE), venuePref);
+  }
+  if (!d104) return { fn: prob3tV102, name: 'v102ロジック' };
+  if (kind === 'blend') {
+    return { fn: (a, b, c) => Math.sqrt((d104[a + '-' + b + '-' + c] || 0) * Math.max(prob3tV102(a, b, c), 0)), name: 'v104統計×v102ロジック（幾何平均）' };
+  }
+  return { fn: (a, b, c) => d104[a + '-' + b + '-' + c] || 0, name: 'v104統計モデル' };
+}
+function v103Recalc() {
+  if (!STATE.v103Input) return;
+  STATE.v103Input.settings = v103ReadSettingsFromUI();
+  const mp = v103BuildModelProb(STATE.v103Input.prob3tV102, STATE.v103Input.settings.modelKind);
+  STATE.v103Input.modelProb3t = mp.fn;
+  STATE.v103Input.modelName = mp.name;
+  STATE.v103 = KEIRIN_V103.run(STATE.v103Input);
+  v103Render();
+}
+function v103ResetSettings() {
+  try { localStorage.removeItem('keirin_v103_settings'); } catch (e) { /* noop */ }
+  V103_SETTING_KEYS.forEach(k => {
+    const el = document.getElementById('v103-' + k);
+    if (el) el.value = KEIRIN_V103.DEFAULTS[k];
+  });
+  const mk = document.getElementById('v103-modelKind');
+  if (mk) mk.value = KEIRIN_V103.DEFAULTS.modelKind;
+  const ft = document.getElementById('v103-fusionType');
+  if (ft) ft.value = KEIRIN_V103.DEFAULTS.fusionType;
+  v103Recalc();
+}
+function v103Fmt(x, d) { return Number.isFinite(x) ? x.toFixed(d) : '-'; }
+function v103Pct(x, d) { return Number.isFinite(x) ? (x * 100).toFixed(d === undefined ? 1 : d) + '%' : '-'; }
+function v103Ticket(c) {
+  const sep = (c.type === '三連複' || c.type === '2車複' || c.type === 'ワイド') ? '=' : '-';
+  return c.nums.join(sep);
+}
+function v103Render() {
+  const sec = document.getElementById('v103-section');
+  if (!sec) return;
+  const R = STATE.v103;
+  sec.style.display = 'block';
+  const st = (R && R.settings) || v103LoadSettings();
+  const input = (k, label, step, w, title) =>
+    `<div title="${title}"><label>${label}</label><input type="number" id="v103-${k}" value="${st[k]}" step="${step}" style="width:${w}px" onchange="v103Recalc()"></div>`;
+  const settingsHtml = `
+    <details style="margin-top:10px" id="v103-settings-box">
+      <summary style="cursor:pointer;font-family:var(--mono);font-size:10px;color:var(--muted)">⚙ 統合エンジン設定（モデル重み・資金・ケリー係数）</summary>
+      <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;margin-top:8px">
+        <div title="融合に使う独自モデル"><label>モデル</label><select id="v103-modelKind" onchange="v103Recalc()" style="font-size:11px">
+          <option value="v104"${st.modelKind === 'v104' ? ' selected' : ''}>v104 統計モデル（過去実績で学習）</option>
+          <option value="blend"${st.modelKind === 'blend' ? ' selected' : ''}>v104 × v102 幾何平均</option>
+          <option value="v102"${st.modelKind === 'v102' ? ' selected' : ''}>v102 ロジック</option>
+        </select></div>
+        <div title="線形=市場とモデルの加重平均（安全側）/ 対数=Benter型（本命が膨らみやすい）"><label>融合方式</label><select id="v103-fusionType" onchange="v103Recalc()" style="font-size:11px">
+          <option value="linear"${st.fusionType !== 'log' ? ' selected' : ''}>線形プール（推奨）</option>
+          <option value="log"${st.fusionType === 'log' ? ' selected' : ''}>対数プール（Benter型）</option>
+        </select></div>
+        ${input('alpha', 'モデル重みα', 0.05, 70, '0=市場のみ / 大きいほど独自モデルを信頼')}
+        ${input('beta', '市場重みβ', 0.05, 70, '市場（オッズ）の信頼度。α+β=1 を推奨')}
+        ${input('evMin', 'EV下限', 0.05, 70, '候補にする融合EVの下限')}
+        ${input('oddsMax', 'オッズ上限', 10, 80, 'これを超える高配当は候補外')}
+        ${input('maxBets', '最大点数', 1, 60, '1レースで買う最大点数')}
+        ${input('bankroll', '資金(円)', 1000, 100, '総資金')}
+        ${input('kellyFrac', 'ケリー係数', 0.05, 70, '0.25=1/4ケリー（推奨）')}
+        ${input('maxExposure', '1R上限比率', 0.01, 70, '1レースに使う資金の上限比率')}
+        <button class="btn btn-outline btn-sm" onclick="v103ResetSettings()">既定値に戻す</button>
+      </div>
+    </details>`;
+
+  // 設定欄は初回のみ描画（入力中の要素を再描画で消さないため）
+  if (!document.getElementById('v103-body')) {
+    sec.innerHTML = `<div class="card" style="border-color:#5bcff566;margin-bottom:12px">
+      <div class="ct" style="color:var(--blue)">▸ 🏆 v104 統合エンジン（実績学習モデル × 市場融合 × 一括ケリー）</div>
+      <div id="v103-body"></div>${settingsHtml}
+      <div style="font-family:var(--mono);font-size:10px;color:var(--muted);margin-top:8px">
+        ※ 融合EVは市場オッズを実測λで較正した確率に独自モデルを重み付けした推定値です。α・βは暫定値で、的中・利益を保証するものではありません。
+      </div></div>`;
+  }
+  const body = document.getElementById('v103-body');
+  if (!R || !R.ok) {
+    body.innerHTML = `<div style="font-family:var(--mono);font-size:11px;color:var(--muted)">${(R && R.reason) || '未計算'}</div>`;
+    return;
+  }
+
+  const P = R.portfolio;
+  const verdict = R.ken
+    ? `<div style="padding:10px 12px;background:#1f0a0a;border:1px solid var(--red);border-radius:4px;color:var(--red);font-weight:bold;margin-bottom:10px">🛑 見送り（ケン）推奨 — 融合EV ${v103Fmt(st.evMin, 2)} 以上の買い目がありません</div>`
+    : `<div style="padding:10px 12px;background:#0a1f12;border:1px solid var(--green);border-radius:4px;color:var(--green);font-weight:bold;margin-bottom:10px">✅ 勝負レース — ${R.bets.length}点 / 合計 ¥${P.stake.toLocaleString()}</div>`;
+
+  const betRows = R.bets.map(c => `<tr>
+      <td style="text-align:left;font-weight:bold;color:var(--gold)">${v103Ticket(c)}</td>
+      <td>${c.type}</td><td>${v103Fmt(c.odds, 1)}</td>
+      <td>${v103Pct(c.pCap)}</td><td>${v103Pct(c.pMarket)}</td>
+      <td style="color:var(--green);font-weight:bold">${v103Fmt(c.ev, 2)}</td>
+      <td style="color:var(--gold);font-weight:bold">¥${c.stake.toLocaleString()}</td>
+      <td>¥${Math.round(c.stake * c.odds).toLocaleString()}</td></tr>`).join('');
+  const betTable = R.bets.length ? `
+    <div style="overflow-x:auto"><table class="rtable" style="font-size:11px">
+      <thead><tr><th style="text-align:left">買い目</th><th>券種</th><th>オッズ</th><th>融合確率</th><th>市場確率</th><th>融合EV</th><th>賭け金</th><th>的中払戻</th></tr></thead>
+      <tbody>${betRows}</tbody></table></div>
+    <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:10px">
+      <div class="sumcard" style="min-width:100px"><div class="sumcard-val" style="color:var(--blue)">${v103Pct(P.hitProb)}</div><div class="sumcard-label">いずれか的中率</div></div>
+      <div class="sumcard" style="min-width:100px"><div class="sumcard-val" style="color:var(--green)">${v103Fmt(P.roi * 100, 0)}%</div><div class="sumcard-label">期待回収率</div></div>
+      <div class="sumcard" style="min-width:100px"><div class="sumcard-val" style="color:var(--gold)">¥${Math.round(P.maxPay).toLocaleString()}</div><div class="sumcard-label">最大払戻</div></div>
+    </div>` : '';
+
+  const riders = [...R.riders].sort((a, b) => b.win.fused - a.win.fused);
+  const pName = n => { const p = (STATE.players || []).find(q => q.num === n); return p && p.name ? p.name : ''; };
+  const riderRows = riders.map(r => {
+    const diff = r.win.fused - r.win.market;
+    const col = diff > 0.01 ? 'var(--green)' : diff < -0.01 ? 'var(--red)' : 'var(--muted)';
+    return `<tr><td style="text-align:left">${r.num} ${pName(r.num)}</td>
+      <td>${v103Pct(r.win.model)}</td><td>${v103Pct(r.win.market)}</td>
+      <td style="color:${col};font-weight:bold">${v103Pct(r.win.fused)}</td><td>${v103Pct(r.top3)}</td></tr>`;
+  }).join('');
+  const topRows = R.topOutcomes.map(t => `<span style="white-space:nowrap;background:var(--bg3);padding:2px 6px;border-radius:3px">${t.o.join('-')} <b style="color:var(--gold)">${v103Pct(t.p)}</b></span>`).join(' ');
+
+  body.innerHTML = `
+    <div style="font-family:var(--mono);font-size:10px;color:var(--muted);margin-bottom:8px">
+      市場分布: ${R.source}（カバー率 ${v103Pct(R.coverage, 0)}） / モデル: ${R.modelName} / 融合 ${st.fusionType === 'log' ? `f ∝ 市場^${v103Fmt(st.beta, 2)} × モデル^${v103Fmt(st.alpha, 2)}` : `f = ${v103Fmt(st.beta, 2)}×市場 + ${v103Fmt(st.alpha, 2)}×モデル`} / 資金 ¥${Number(st.bankroll).toLocaleString()} × ${v103Fmt(st.kellyFrac, 2)}ケリー
+    </div>
+    ${verdict}${betTable}
+    <details style="margin-top:10px">
+      <summary style="cursor:pointer;font-family:var(--mono);font-size:10px;color:var(--muted)">▸ 各車の1着率（モデル / 市場 / 融合）・本命着順</summary>
+      <div style="overflow-x:auto;margin-top:6px"><table class="rtable" style="font-size:11px">
+        <thead><tr><th style="text-align:left">車番</th><th>モデル1着</th><th>市場1着</th><th>融合1着</th><th>融合3着内</th></tr></thead>
+        <tbody>${riderRows}</tbody></table></div>
+      <div style="font-family:var(--mono);font-size:10px;margin-top:6px;display:flex;gap:4px;flex-wrap:wrap">本命着順: ${topRows}</div>
+    </details>`;
 }
 </script>
 </body>
