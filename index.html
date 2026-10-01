@@ -1,4 +1,18 @@
 <!--
+  競輪予想エンジン v105 変更履歴
+  ===========================================================
+  【13,292レース本格バックテスト反映】2026/10/01
+    [1] 収集リポジトリの全データ（2026/02/16〜09/30, 13,292R, オッズ約480万行）で
+        ウォークフォワード検証（analysis/backtest.py）。選定期間4〜6月 / 検証期間7〜9月。
+    [2] 着順モデルに S/B回数・決まり手回数（逃・捲・差・マ）を追加（v105）。対数損失 4.556(得点のみ)→4.299。
+        出走表の解析で決まり手回数を保存するよう変更。特徴量は名前で計算（学習側と自動で一致）。
+    [3] 3連単オッズの逆数を正規化した確率が実際の的中率とよく一致（モデルの上乗せは α≒0.01〜0.07）。
+        → 融合の既定を Benter型（f ∝ 市場^β × モデル^α、最尤推定値）に変更し、較正上限キャップを外した。
+    [4] 利益の源泉は券種プール間の歪み: 3連単から見て割安な2車複。
+        「2車複 × 融合EV1.10以上」: 選定 108.7%(1,012点) → 検証 154.6%(506点)。ただし月別変動大・最終オッズ基準。
+        → 既定の推奨対象を2車複のみに（設定で全券種に切替可）。
+    [5] 「🎯 的中率重視の買い目」: 券種ごとに当たる確率の高い順に3点を表示。
+
   競輪予想エンジン v104 変更履歴
   ===========================================================
   【実績学習モデル：過去1,470レースで最尤推定】2026/10/01
@@ -1380,7 +1394,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>競輪予想エンジン v104 実績学習版</title>
+<title>競輪予想エンジン v105 本格検証版</title>
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Noto+Sans+JP:wght@400;700;900&display=swap');
 :root{
@@ -1461,7 +1475,7 @@ textarea{resize:vertical}
 <body>
 <div class="app">
 <header>
-  <div class="logo">🚴 KEIRIN v104 <span>【実績学習モデル×市場融合×一括ケリー】</span></div>
+  <div class="logo">🚴 KEIRIN v105 <span>【13,292R検証済み×券種間歪み検出×一括ケリー】</span></div>
 </header>
 <input type="hidden" id="bankroll" value="30000">
 <div class="tabs">
@@ -3418,7 +3432,11 @@ function parseWinTicket() {
       }
     }
 
-    players.push({name, score:scoreVal, s, b, miss:missRate, w1, w2, w3, place2Rate, place3Rate, totalRaces:total, comment, kyujo:0, fatigue:1, ki, num:0, region, pace});
+    // v105: 決まり手回数（逃・捲・差・マ）を保存（統計モデルの特徴量に使用）
+    const kimarite = secondLoopIntVals.length >= 8
+      ? {nige: secondLoopIntVals[0], maku: secondLoopIntVals[1], sashi: secondLoopIntVals[2], mark: secondLoopIntVals[3]}
+      : null;
+    players.push({name, score:scoreVal, s, b, miss:missRate, w1, w2, w3, place2Rate, place3Rate, totalRaces:total, comment, kyujo:0, fatigue:1, ki, num:0, region, pace, kimarite});
   }
 
   players.forEach((p,idx)=>p.num=idx+1);
@@ -7567,8 +7585,10 @@ const V104 = (() => {
   const dot = (w, x, off) => x.reduce((t, v, i) => t + w[off + i] * v, 0);
   const mean = a => a.reduce((t, v) => t + v, 0) / a.length;
 
-  // riders: [{num, point, first, second, third(各%), style('逃'|'両'|'追'), line_id, line_pos(1始まり), line_size, pref}]
-  function riderMatrix(riders, venuePref) {
+  // riders: [{num, point, first, second, third(各%), style('逃'|'両'|'追'), line_id, line_pos(1始まり), line_size, pref,
+  //            （v105拡張）s, b, k_nige, k_maku, k_sashi, k_mark, n4m}]
+  // 特徴量は名前で計算し、model.rider_features の順に並べる（学習側 train_model.py と同一定義）。
+  function riderMatrix(riders, venuePref, names) {
     const raw = riders.map(r => Number(r.point) || 0);
     const valid = raw.filter(v => v > 0);
     const meanValid = valid.length ? mean(valid) : 80;
@@ -7582,31 +7602,46 @@ const V104 = (() => {
       if (r.line_pos === 1) headPt[r.line_id] = pts[i];
     });
     const nNige = riders.filter(r => r.style === '逃').length;
+    // 拡張: 回数 ÷ 出走数 をレース内で中心化（出走数0の選手はレース平均で補完）
+    const extKeys = ['s', 'b', 'k_nige', 'k_maku', 'k_sashi', 'k_mark'];
+    const extRaw = riders.map(r => extKeys.map(k => (r.n4m > 0 ? (Number(r[k]) || 0) / r.n4m : NaN)));
+    const extMean = extKeys.map((_, c) => { const v = extRaw.map(x => x[c]).filter(Number.isFinite); return v.length ? mean(v) : 0; });
+    const extFilled = extRaw.map(x => x.map((v, c) => (Number.isFinite(v) ? v : extMean[c])));
+    const extC = extKeys.map((_, c) => mean(extFilled.map(x => x[c])));
     return riders.map((r, i) => {
       const single = r.line_size <= 1;
       const ban = !single && r.line_pos === 2;
-      return [
-        (pts[i] - ptMean) / 10,
-        pts[i] >= ptMax ? 1 : 0,
-        rates[i][0] - rMean[0], rates[i][1] - rMean[1], rates[i][2] - rMean[2],
-        r.style === '逃' ? 1 : 0,
-        r.style === '両' ? 1 : 0,
-        ban ? 1 : 0,
-        (!single && r.line_pos >= 3) ? 1 : 0,
-        single ? 1 : 0,
-        (mean(linePts[r.line_id]) - ptMean) / 10,
-        ban ? ((headPt[r.line_id] !== undefined ? headPt[r.line_id] : ptMean) - ptMean) / 10 : 0,
-        r.style === '逃' ? nNige - 1 : 0,
-        (venuePref && r.pref === venuePref) ? 1 : 0
-      ];
+      const F = {
+        pt: (pts[i] - ptMean) / 10,
+        pt_top: pts[i] >= ptMax ? 1 : 0,
+        win: rates[i][0] - rMean[0], quin: rates[i][1] - rMean[1], trio: rates[i][2] - rMean[2],
+        nige: r.style === '逃' ? 1 : 0,
+        ryou: r.style === '両' ? 1 : 0,
+        ban: ban ? 1 : 0,
+        pos3: (!single && r.line_pos >= 3) ? 1 : 0,
+        single: single ? 1 : 0,
+        line_pt: (mean(linePts[r.line_id]) - ptMean) / 10,
+        head_pt_ban: ban ? ((headPt[r.line_id] !== undefined ? headPt[r.line_id] : ptMean) - ptMean) / 10 : 0,
+        nige_comp: r.style === '逃' ? nNige - 1 : 0,
+        home: (venuePref && r.pref === venuePref) ? 1 : 0,
+        s_rate: extFilled[i][0] - extC[0], b_rate: extFilled[i][1] - extC[1],
+        k_nige: extFilled[i][2] - extC[2], k_maku: extFilled[i][3] - extC[3],
+        k_sashi: extFilled[i][4] - extC[4], k_mark: extFilled[i][5] - extC[5]
+      };
+      return { x: names.map(nm => F[nm] || 0), F };
     });
   }
-  function pair2(ra, rj, quinJ) {
+  function pair2(ra, rj, Fj, Fa, names) {
     const same = ra.line_size > 1 && ra.line_id === rj.line_id;
     const follow = same && rj.line_pos === ra.line_pos + 1;
     const leadBack = same && rj.line_pos === ra.line_pos - 1;
-    return [follow ? 1 : 0, leadBack ? 1 : 0, (same && !follow && !leadBack) ? 1 : 0,
-      (follow && ra.line_pos === 1) ? quinJ : 0];
+    const P = {
+      follow: follow ? 1 : 0, lead_back: leadBack ? 1 : 0,
+      same_line_other: (same && !follow && !leadBack) ? 1 : 0,
+      follow_x_ban_quin: (follow && ra.line_pos === 1) ? Fj.quin : 0,
+      follow_x_lead_b: (follow && ra.line_pos === 1) ? Fa.b_rate : 0
+    };
+    return names.map(nm => P[nm] || 0);
   }
   function pair3(ra, rb, rk) {
     const sb = rb.line_size > 1 && rb.line_id === rk.line_id;
@@ -7620,7 +7655,9 @@ const V104 = (() => {
 
   // 全3連単の確率 { 'a-b-c': p }
   function dist(model, riders, venuePref) {
-    const X = riderMatrix(riders, venuePref);
+    const RM = riderMatrix(riders, venuePref, model.rider_features);
+    const X = RM.map(o => o.x), Fs = RM.map(o => o.F);
+    const p2names = model.pair2_features || ['follow', 'lead_back', 'same_line_other', 'follow_x_ban_quin'];
     const n = riders.length, d = X[0].length;
     const p1 = softmax(X.map(x => dot(model.w1, x, 0)));
     const base2 = X.map(x => dot(model.w2, x, 0));
@@ -7628,7 +7665,7 @@ const V104 = (() => {
     const out = {};
     for (let a = 0; a < n; a++) {
       const c2 = []; for (let j = 0; j < n; j++) if (j !== a) c2.push(j);
-      const p2 = softmax(c2.map(j => base2[j] + dot(model.w2, pair2(riders[a], riders[j], X[j][3]), d)));
+      const p2 = softmax(c2.map(j => base2[j] + dot(model.w2, pair2(riders[a], riders[j], Fs[j], Fs[a], p2names), d)));
       c2.forEach((b, jj) => {
         const c3 = []; for (let k = 0; k < n; k++) if (k !== a && k !== b) c3.push(k);
         const p3 = softmax(c3.map(k => base3[k] + dot(model.w3, pair3(riders[a], riders[b], riders[k]), d)));
@@ -7660,14 +7697,19 @@ const V104 = (() => {
         line_id: single ? 's' + p.num : 'L' + p.lineIdx,
         line_pos: single ? 1 : (p.pos + 1),
         line_size: single ? 1 : line.length,
-        pref: p.region || ''
+        pref: p.region || '',
+        // v105拡張（S/B・決まり手回数。出走表から読めた場合のみ有効）
+        s: Number(p.s) || 0, b: Number(p.b) || 0,
+        k_nige: p.kimarite ? p.kimarite.nige : 0, k_maku: p.kimarite ? p.kimarite.maku : 0,
+        k_sashi: p.kimarite ? p.kimarite.sashi : 0, k_mark: p.kimarite ? p.kimarite.mark : 0,
+        n4m: p.kimarite ? total : 0
       };
     });
   }
   return { dist, ridersFromState, riderMatrix };
 })();
 // 学習済み係数（analysis/model_v104.json と同一）
-const KEIRIN_V104_MODEL = {"version":"v104","trained_on":{"races":1470,"date_min":20260610,"date_max":20260629},"rider_features":["pt","pt_top","win","quin","trio","nige","ryou","ban","pos3","single","line_pt","head_pt_ban","nige_comp","home"],"pair2_features":["follow","lead_back","same_line_other","follow_x_ban_quin"],"pair3_features":["behind_b","behind_a","same_line_ab","ahead_of_b"],"w1":[1.3469,0.06482,1.37693,0.82304,0.62076,1.01511,0.60744,0.7219,-0.2447,-0.10686,0.15165,0.44681,0.05144,0.30775],"w2":[1.22827,-0.0564,0.59958,0.15213,1.10713,0.45898,0.09489,0.2234,-0.15871,-0.08797,0.34012,-0.08611,-0.15943,0.13491,1.49731,1.55581,-0.05427,-0.41867],"w3":[0.98645,-0.04317,-0.06858,0.37886,0.80409,0.24025,0.00265,-0.07043,-0.04191,0.09489,0.14574,-0.14724,-0.12369,0.08839,1.20476,1.34408,0.76951,0.7334],"holdout":{"races":706,"logloss_3t":{"uniform":5.3614,"pt":4.5213,"full":4.419,"market":4.1187}},"fusion_alpha":null,"fusion_type":null,"fusion_races":0};
+const KEIRIN_V104_MODEL = {"version":"v105","trained_on":{"races":13172,"date_min":20260216,"date_max":20260930},"rider_features":["pt","pt_top","win","quin","trio","nige","ryou","ban","pos3","single","line_pt","head_pt_ban","nige_comp","home","s_rate","b_rate","k_nige","k_maku","k_sashi","k_mark"],"pair2_features":["follow","lead_back","same_line_other","follow_x_ban_quin","follow_x_lead_b"],"pair3_features":["behind_b","behind_a","same_line_ab","ahead_of_b"],"w1":[1.65992,0.04833,1.84221,0.11875,0.39309,0.76897,0.5918,0.7651,-0.31009,0.19226,-0.06169,0.68556,0.01579,0.30961,-0.09278,0.54999,0.56835,0.33866,1.29775,-0.03368],"w2":[1.34058,-0.11334,0.33986,0.26569,0.97909,0.37311,0.23917,0.21176,-0.2302,0.17989,-0.04803,0.05582,-0.09824,0.24672,0.14876,0.60522,-0.12309,0.5161,0.4128,0.21144,1.46599,1.36995,0.2878,-0.76461,0.31973],"w3":[1.10487,-0.10037,0.15102,-0.18883,0.86755,-0.00629,-0.01396,-0.15116,-0.14251,0.15135,0.24934,-0.41261,-0.03681,0.16817,0.29587,0.38179,-0.18538,0.47868,0.53368,0.4991,1.44573,1.37149,0.73773,0.76795],"holdout":{"races":3243,"logloss_3t":{"uniform":5.3897,"pt":4.5562,"full":4.2986,"market":4.0191}},"fusion_alpha":0.03,"fusion_beta":1.029,"fusion_type":"benter","fusion_races":3243};
 
 // ============================================================
 // v103: 統合エンジン（市場融合 × 券種整合 × 一括ケリー）
@@ -7693,11 +7735,17 @@ const KEIRIN_V103 = (() => {
   const DEFAULTS = {
     // モデル重み α: 過去データで推定済みならその値、未推定なら暫定0.25
     //   （v104モデルは単独では市場より対数損失が約0.3悪いため控えめに設定）
-    alpha: (typeof KEIRIN_V104_MODEL !== 'undefined' && Number.isFinite(KEIRIN_V104_MODEL.fusion_alpha)) ? KEIRIN_V104_MODEL.fusion_alpha : 0.25,
-    beta: (typeof KEIRIN_V104_MODEL !== 'undefined' && Number.isFinite(KEIRIN_V104_MODEL.fusion_alpha)) ? 1 - KEIRIN_V104_MODEL.fusion_alpha : 0.75,
+    // 既定は 13,292レースの本格バックテストで最尤推定した Benter型の重み（モデル α≒0.03 / 市場 β≒1.03）。
+    // 学習スクリプトが推定した値（KEIRIN_V104_MODEL.fusion_*）があればそちらを使う。
+    alpha: (typeof KEIRIN_V104_MODEL !== 'undefined' && Number.isFinite(KEIRIN_V104_MODEL.fusion_alpha)) ? KEIRIN_V104_MODEL.fusion_alpha : 0.03,
+    beta: (typeof KEIRIN_V104_MODEL !== 'undefined' && Number.isFinite(KEIRIN_V104_MODEL.fusion_beta)) ? KEIRIN_V104_MODEL.fusion_beta
+      : (typeof KEIRIN_V104_MODEL !== 'undefined' && Number.isFinite(KEIRIN_V104_MODEL.fusion_alpha)) ? 1 - KEIRIN_V104_MODEL.fusion_alpha : 1.03,
     // 融合方式: linear=線形プール（安全側の既定）/ log=段階型対数プール（Benter型）。
     //   対数プールは両者が一致する本命を膨らませる性質があるため、過去データで優位と確認された場合のみ既定にする。
-    fusionType: (typeof KEIRIN_V104_MODEL !== 'undefined' && KEIRIN_V104_MODEL.fusion_type === 'log') ? 'log' : 'linear',
+    //   benter=着順全体の対数プール（3連単オッズの逆数をそのまま正規化。バックテストで最良）
+    fusionType: (typeof KEIRIN_V104_MODEL !== 'undefined' && ['linear', 'log', 'benter'].includes(KEIRIN_V104_MODEL.fusion_type)) ? KEIRIN_V104_MODEL.fusion_type : 'benter',
+    // 対象券種: validated=検証期間でも回収率100%超だった2車複のみ / all=全券種
+    betTypes: 'validated',
     modelKind: 'v104', // 融合に使うモデル: v104=統計モデル / v102=既存ロジック / blend=両者の幾何平均
     evMin: 1.10,       // 候補とする融合EVの下限
     pMin: 0.005,       // 候補とする融合確率の下限（超大穴の除外）
@@ -7781,7 +7829,7 @@ const KEIRIN_V103 = (() => {
   }
 
   // [1] 市場分布
-  function marketDist(nums, outs, oddsIdx, modelDist) {
+  function marketDist(nums, outs, oddsIdx, modelDist, raw) {
     const N = outs.length;
     const nPairs = nums.length * (nums.length - 1);
     // モデルの条件付き 3着分布 P(c | a,b) と 着順内訳
@@ -7800,7 +7848,8 @@ const KEIRIN_V103 = (() => {
     const t3 = oddsIdx['3連単'];
     const cover3t = outs.filter(o => k3(o[0], o[1], o[2]) in t3).length;
     if (cover3t >= N * 0.6) {
-      const w = fillMissing(outs.map(o => { const od = t3[k3(o[0], o[1], o[2])]; return od ? calImplied('3連単', od) : null; }));
+      // raw=true: オッズの逆数をそのまま正規化（本格バックテストで実際の的中率とよく一致した方式）
+      const w = fillMissing(outs.map(o => { const od = t3[k3(o[0], o[1], o[2])]; return od ? (raw ? 1 / od : calImplied('3連単', od)) : null; }));
       return { q: normalize(w), source: '3連単', coverage: cover3t / N };
     }
     const t2 = oddsIdx['2車単'];
@@ -7843,7 +7892,8 @@ const KEIRIN_V103 = (() => {
   //   着順全体を一度にプールすると、両者が「1着」で一致し2・3着で割れる時に
   //   本命の1着率が両者より高く膨らむ（偽の妙味）ため、段階ごとに融合する。
   function fuse(q, p, alpha, beta, outs, type) {
-    if (type !== 'log') {
+    if (type === 'benter') outs = null;  // 着順全体の対数プール（α・βは最尤推定値）
+    else if (type !== 'log') {
       // 線形プール（既定）: f = β·q + α·p。周辺確率が常に両者の間に収まり、偽の妙味を生まない。
       return normalize(q.map((qi, i) => beta * qi + alpha * p[i]));
     }
@@ -7950,7 +8000,8 @@ const KEIRIN_V103 = (() => {
     const p = normalize(outs.map(o => Math.max(0, Number(input.modelProb3t(o[0], o[1], o[2])) || 0)));
     if (!p) return { ok: false, reason: 'モデル確率が計算できません' };
     const oddsIdx = indexOdds(input.allOdds);
-    const mk = marketDist(nums, outs, oddsIdx, p);
+    const isBenter = opt.fusionType === 'benter';
+    const mk = marketDist(nums, outs, oddsIdx, p, isBenter);
     if (!mk || !mk.q) return { ok: false, reason: '市場分布を作るのに十分なオッズがありません（3連単の全体貼り付けを推奨）' };
     const f = fuse(mk.q, p, opt.alpha, opt.beta, outs, opt.fusionType);
 
@@ -7971,7 +8022,8 @@ const KEIRIN_V103 = (() => {
       const pF = win.reduce((t, i) => t + f[i], 0);
       const qMk = win.reduce((t, i) => t + mk.q[i], 0);
       const qc = calImplied(o.type, o.odds);
-      const pCap = qc ? Math.min(pF, opt.kappa * qc) : pF;
+      // Benter型は3連単から計算した確率がそのまま較正済みのため上限キャップを掛けない
+      const pCap = (qc && !isBenter) ? Math.min(pF, opt.kappa * qc) : pF;
       return {
         type: o.type, nums: o.nums, odds: o.odds, win,
         pFused: pF, pMarket: qMk, pCap,
@@ -7986,6 +8038,7 @@ const KEIRIN_V103 = (() => {
     // 候補 → 一括ケリー
     const cands = tickets
       .filter(t => t.ev >= opt.evMin && t.pCap >= opt.pMin && t.odds <= opt.oddsMax)
+      .filter(t => opt.betTypes !== 'validated' || t.type === '2車複')
       .sort((a, b) => b.ev - a.ev)
       .slice(0, 15);
     const s = multiKelly(cands, f);
@@ -8014,9 +8067,24 @@ const KEIRIN_V103 = (() => {
     // 融合分布上の本命着順トップ5
     const topOutcomes = outs.map((o, i) => ({ o, p: f[i] })).sort((a, b) => b.p - a.p).slice(0, 5);
 
+    // 的中率重視: 券種ごとに融合確率の高い組の上位3点（オッズ未入力でも確率は出す）
+    const hitPicks = {};
+    ['ワイド', '2車複', '3連複', '2車単'].forEach(type => {
+      const acc = {};
+      outs.forEach((o, i) => {
+        const keys = type === 'ワイド' ? [[o[0], o[1]], [o[0], o[2]], [o[1], o[2]]].map(kSet)
+          : type === '2車複' ? [kSet([o[0], o[1]])] : type === '3連複' ? [kSet(o)] : [k2(o[0], o[1])];
+        keys.forEach(kk => { acc[kk] = (acc[kk] || 0) + f[i]; });
+      });
+      hitPicks[type] = Object.entries(acc).sort((a, b) => b[1] - a[1]).slice(0, 3).map(([kk, pr]) => {
+        const od = (oddsIdx[type === '3連複' ? '三連複' : type] || {})[kk];
+        return { key: kk.replace(/=/g, type === '2車単' ? '-' : '='), p: pr, odds: od || null, ev: od ? pr * od : null };
+      });
+    });
+
     return {
       ok: true, settings: opt, source: mk.source, coverage: mk.coverage, modelName: input.modelName || 'モデル',
-      riders, tickets, evMap, bets, topOutcomes,
+      riders, tickets, evMap, bets, topOutcomes, hitPicks,
       portfolio: { stake, expRet, roi: stake > 0 ? expRet / stake : 0, hitProb, maxPay },
       ken: bets.length === 0
     };
@@ -8033,7 +8101,8 @@ function v103LoadSettings() {
     const saved = JSON.parse(localStorage.getItem('keirin_v103_settings') || '{}');
     V103_SETTING_KEYS.forEach(k => { if (Number.isFinite(saved[k])) s[k] = saved[k]; });
     if (['v104', 'v102', 'blend'].includes(saved.modelKind)) s.modelKind = saved.modelKind;
-    if (['linear', 'log'].includes(saved.fusionType)) s.fusionType = saved.fusionType;
+    if (['linear', 'log', 'benter'].includes(saved.fusionType)) s.fusionType = saved.fusionType;
+    if (['validated', 'all'].includes(saved.betTypes)) s.betTypes = saved.betTypes;
   } catch (e) { /* ストレージ不可でも既定値で動作 */ }
   return s;
 }
@@ -8047,6 +8116,8 @@ function v103ReadSettingsFromUI() {
   if (mk) s.modelKind = mk.value;
   const ft = document.getElementById('v103-fusionType');
   if (ft) s.fusionType = ft.value;
+  const bt = document.getElementById('v103-betTypes');
+  if (bt) s.betTypes = bt.value;
   try { localStorage.setItem('keirin_v103_settings', JSON.stringify(s)); } catch (e) { /* noop */ }
   return s;
 }
@@ -8082,6 +8153,8 @@ function v103ResetSettings() {
   if (mk) mk.value = KEIRIN_V103.DEFAULTS.modelKind;
   const ft = document.getElementById('v103-fusionType');
   if (ft) ft.value = KEIRIN_V103.DEFAULTS.fusionType;
+  const bt = document.getElementById('v103-betTypes');
+  if (bt) bt.value = KEIRIN_V103.DEFAULTS.betTypes;
   v103Recalc();
 }
 function v103Fmt(x, d) { return Number.isFinite(x) ? x.toFixed(d) : '-'; }
@@ -8107,9 +8180,14 @@ function v103Render() {
           <option value="blend"${st.modelKind === 'blend' ? ' selected' : ''}>v104 × v102 幾何平均</option>
           <option value="v102"${st.modelKind === 'v102' ? ' selected' : ''}>v102 ロジック</option>
         </select></div>
-        <div title="線形=市場とモデルの加重平均（安全側）/ 対数=Benter型（本命が膨らみやすい）"><label>融合方式</label><select id="v103-fusionType" onchange="v103Recalc()" style="font-size:11px">
-          <option value="linear"${st.fusionType !== 'log' ? ' selected' : ''}>線形プール（推奨）</option>
-          <option value="log"${st.fusionType === 'log' ? ' selected' : ''}>対数プール（Benter型）</option>
+        <div title="Benter型=13,292レースのバックテストで最良（3連単オッズを基準に最尤推定した重み）"><label>融合方式</label><select id="v103-fusionType" onchange="v103Recalc()" style="font-size:11px">
+          <option value="benter"${st.fusionType === 'benter' ? ' selected' : ''}>Benter型（検証済み・推奨）</option>
+          <option value="linear"${st.fusionType === 'linear' ? ' selected' : ''}>線形プール</option>
+          <option value="log"${st.fusionType === 'log' ? ' selected' : ''}>段階型対数プール</option>
+        </select></div>
+        <div title="検証済み=選定期間・検証期間とも回収率100%超だった2車複だけを買う"><label>対象券種</label><select id="v103-betTypes" onchange="v103Recalc()" style="font-size:11px">
+          <option value="validated"${st.betTypes !== 'all' ? ' selected' : ''}>2車複のみ（検証済み）</option>
+          <option value="all"${st.betTypes === 'all' ? ' selected' : ''}>全券種</option>
         </select></div>
         ${input('alpha', 'モデル重みα', 0.05, 70, '0=市場のみ / 大きいほど独自モデルを信頼')}
         ${input('beta', '市場重みβ', 0.05, 70, '市場（オッズ）の信頼度。α+β=1 を推奨')}
@@ -8126,10 +8204,10 @@ function v103Render() {
   // 設定欄は初回のみ描画（入力中の要素を再描画で消さないため）
   if (!document.getElementById('v103-body')) {
     sec.innerHTML = `<div class="card" style="border-color:#5bcff566;margin-bottom:12px">
-      <div class="ct" style="color:var(--blue)">▸ 🏆 v104 統合エンジン（実績学習モデル × 市場融合 × 一括ケリー）</div>
+      <div class="ct" style="color:var(--blue)">▸ 🏆 v105 統合エンジン（3連単基準の確率 × 券種間の歪み検出 × 一括ケリー）</div>
       <div id="v103-body"></div>${settingsHtml}
       <div style="font-family:var(--mono);font-size:10px;color:var(--muted);margin-top:8px">
-        ※ 融合EVは市場オッズを実測λで較正した確率に独自モデルを重み付けした推定値です。α・βは暫定値で、的中・利益を保証するものではありません。
+        ※ 融合EVは3連単オッズから計算した確率（13,292レースで実際の的中率とよく一致）に独自モデルを最尤推定の重みで加えた推定値です。2車複の妙味は券種プール間の歪みによるもので、締切直前にオッズが動くと消えることがあります。的中・利益を保証するものではありません。
       </div></div>`;
   }
   const body = document.getElementById('v103-body');
@@ -8171,11 +8249,19 @@ function v103Render() {
   }).join('');
   const topRows = R.topOutcomes.map(t => `<span style="white-space:nowrap;background:var(--bg3);padding:2px 6px;border-radius:3px">${t.o.join('-')} <b style="color:var(--gold)">${v103Pct(t.p)}</b></span>`).join(' ');
 
+  const hitCell = (t, list) => `<div style="flex:1;min-width:150px"><div style="font-family:var(--mono);font-size:10px;color:var(--blue);margin-bottom:3px">${t}</div>${list.map(h =>
+      `<div style="font-size:11px;white-space:nowrap"><b style="color:var(--gold)">${h.key}</b> 的中${v103Pct(h.p)}${h.odds ? ` / ${v103Fmt(h.odds, 1)}倍 / EV${v103Fmt(h.ev, 2)}` : ''}</div>`).join('')}</div>`;
+  const hitHtml = R.hitPicks ? `
+    <div style="margin-top:12px;padding:8px 10px;background:var(--bg3);border-radius:4px">
+      <div style="font-family:var(--mono);font-size:10px;color:var(--muted);margin-bottom:6px">🎯 的中率重視の買い目（当たる確率が高い順。回収率は概ね75〜90%）</div>
+      <div style="display:flex;gap:10px;flex-wrap:wrap">${['ワイド', '2車複', '3連複', '2車単'].map(t => hitCell(t, R.hitPicks[t])).join('')}</div>
+    </div>` : '';
   body.innerHTML = `
     <div style="font-family:var(--mono);font-size:10px;color:var(--muted);margin-bottom:8px">
-      市場分布: ${R.source}（カバー率 ${v103Pct(R.coverage, 0)}） / モデル: ${R.modelName} / 融合 ${st.fusionType === 'log' ? `f ∝ 市場^${v103Fmt(st.beta, 2)} × モデル^${v103Fmt(st.alpha, 2)}` : `f = ${v103Fmt(st.beta, 2)}×市場 + ${v103Fmt(st.alpha, 2)}×モデル`} / 資金 ¥${Number(st.bankroll).toLocaleString()} × ${v103Fmt(st.kellyFrac, 2)}ケリー
+      市場分布: ${R.source}（カバー率 ${v103Pct(R.coverage, 0)}） / モデル: ${R.modelName} / 融合 ${st.fusionType !== 'linear' ? `f ∝ 市場^${v103Fmt(st.beta, 2)} × モデル^${v103Fmt(st.alpha, 2)}` : `f = ${v103Fmt(st.beta, 2)}×市場 + ${v103Fmt(st.alpha, 2)}×モデル`} / 資金 ¥${Number(st.bankroll).toLocaleString()} × ${v103Fmt(st.kellyFrac, 2)}ケリー
     </div>
     ${verdict}${betTable}
+    ${hitHtml}
     <details style="margin-top:10px">
       <summary style="cursor:pointer;font-family:var(--mono);font-size:10px;color:var(--muted)">▸ 各車の1着率（モデル / 市場 / 融合）・本命着順</summary>
       <div style="overflow-x:auto;margin-top:6px"><table class="rtable" style="font-size:11px">

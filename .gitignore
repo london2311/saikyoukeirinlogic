@@ -1,0 +1,3 @@
+analysis/backtest_cache.pkl
+__pycache__/
+*.pyc

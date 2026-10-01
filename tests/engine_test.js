@@ -39,7 +39,7 @@ test('券種整合: 2車単(a,b) = Σ 3連単(a,b,k)', () => {
 });
 
 test('線形プール: 1着率が市場とモデルの間に収まる', () => {
-  const R = K.run({ nums, modelProb3t: (a, b, c) => pl([a, b, c], { ...truth, 1: 2, 5: 4 }), allOdds: odds3t, settings: { alpha: 0.6, beta: 0.4 } });
+  const R = K.run({ nums, modelProb3t: (a, b, c) => pl([a, b, c], { ...truth, 1: 2, 5: 4 }), allOdds: odds3t, settings: { alpha: 0.6, beta: 0.4, fusionType: 'linear' } });
   R.riders.forEach(r => {
     const lo = Math.min(r.win.model, r.win.market) - 1e-12, hi = Math.max(r.win.model, r.win.market) + 1e-12;
     assert(r.win.fused >= lo && r.win.fused <= hi, `rider ${r.num}`);
@@ -49,6 +49,16 @@ test('線形プール: 1着率が市場とモデルの間に収まる', () => {
 test('モデル=市場なら見送り（偽の妙味を出さない）', () => {
   const R = K.run({ nums, modelProb3t: (a, b, c) => pl([a, b, c], truth), allOdds: odds3t });
   assert(R.ken && R.bets.length === 0);
+});
+
+test('Benter型: 3連単から見て割安な2車複を検出し、2車複だけを買う', () => {
+  const pairP = outs.filter(o => o[0] === 1 && o[1] === 2 || o[0] === 2 && o[1] === 1).reduce((t, o) => t + pl(o, truth), 0);
+  const cheap = { type: '2車複', nums: [1, 2], odds: +(0.75 / pairP * 1.8).toFixed(1) };   // 本来の1.8倍の配当
+  const fair = { type: '2車単', nums: [2, 1], odds: +(0.75 / pl([2, 1, 3], truth) * 0.5).toFixed(1) };
+  const R = K.run({ nums, modelProb3t: (a, b, c) => pl([a, b, c], truth), allOdds: odds3t.concat([cheap, fair]),
+    settings: { fusionType: 'benter', alpha: 0.03, beta: 1.03 } });
+  assert(R.bets.length === 1 && R.bets[0].type === '2車複', JSON.stringify(R.bets.map(b => b.type)));
+  assert(R.hitPicks['2車複'][0].p > 0 && R.hitPicks['ワイド'].length === 3);
 });
 
 test('一括ケリー: 単一買い目は解析解 (b·p−q)/b と一致', () => {
