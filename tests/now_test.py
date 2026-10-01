@@ -59,26 +59,33 @@ def build_states():
     quin = [dict(id=f'q{a}{b}', key=[a, b], odds=round(0.75 / p * (1.8 if (a, b) == (1, 2) else 1.0), 1),
                  popularityOrder=1) for (a, b), p in pair.items()]
     odds_q = dict(queryKey=['k', 'FETCH_KEIRIN_RACE_ODDS'], state=dict(data=dict(trifecta=tri, quinella=quin)))
+    # 発走前で投票が未集計のページ: 全組 9999.9倍・人気順0（2026-10 の実ページと同じ形）
+    pre = dict(trifecta=[dict(x, odds=9999.9, popularityOrder=0) for x in tri],
+               quinellaPlace=[dict(id=f'w{a}{b}', key=[a, b], odds=0, minOdds=9999.9, maxOdds=9999.9, popularityOrder=0)
+                              for (a, b) in pair],
+               isAggregated=False, oddsUpdatedAt=0)
+    pre_q = dict(queryKey=['k', 'FETCH_KEIRIN_RACE_ODDS'], state=dict(data=pre))
     cup = dict(id='2099123123', startDate='20991230', endDate='20991231', venueId='23', name='テスト杯', grade=2)
     top = dict(tanStackQuery=dict(queries=[dict(queryKey=['k', 'TOP'], state=dict(data=dict(cups=[cup])))]))
-    return top, dict(tanStackQuery=dict(queries=[race_q])), dict(tanStackQuery=dict(queries=[race_q, odds_q]))
+    return (top, dict(tanStackQuery=dict(queries=[race_q])), dict(tanStackQuery=dict(queries=[race_q, odds_q])),
+            dict(tanStackQuery=dict(queries=[race_q, pre_q])))
 
 
 def main():
-    top, card_only, full = build_states()
+    top, card_only, full, presale = build_states()
     calls = []
+    pages = {}
 
     def fake_fetch(url, interval=0):
         calls.append(url)
         wrap = lambda st: '<script>window.__PRELOADED_STATE__ = ' + json.dumps(st, ensure_ascii=False) + ';window.__X = 1</script>'
         if url.endswith('/keirin'):
             return wrap(top)
-        if '/racecard/' in url and not url.endswith('/odds'):
-            return wrap(card_only)                      # 1つ目の候補: 出走表のみ
-        if '/odds/' in url:
-            raise HTTPError(url, 404, 'not found', None, None)  # 2つ目の候補: 存在しない
-        if url.endswith('/odds'):
-            return wrap(full)                           # 3つ目の候補: 出走表＋オッズ
+        for part, st in pages.items():
+            if f'/{part}/' in url:
+                if st is None:
+                    raise HTTPError(url, 404, 'not found', None, None)
+                return wrap(st)
         raise HTTPError(url, 404, 'not found', None, None)
 
     C.fetch_html = fake_fetch
@@ -95,6 +102,8 @@ def main():
             sys.stdout = old
         return buf.getvalue()
 
+    # 1つ目の候補: 出走表のみ → 2つ目: 存在しない → 3つ目: 出走表＋オッズ
+    pages.update(racecard=card_only, odds=None, raceresult=full)
     out = json.loads(run(['取手', '5', '--date', '20991231', '--json']))
     assert out['ok'] and out['market_ok'], out
     assert [b['type'] + ' ' + b['key'] for b in out['bets']] == ['2車複 1-2'], out['bets']
@@ -115,6 +124,16 @@ def main():
     res = E.analyze(E.load_model(), C.parse_racecard(card_only), [], '取手')
     assert res['ok'] and not res['market_ok'] and not res['bets'] and res['warnings']
     print('✔ オッズ不足時はEVを出さず警告')
+
+    # 発走前（9999.9倍の仮表示）: オッズなし扱い。オッズ欄のあるページで打ち切り、他のURLは試さない
+    assert all(o['odds'] == '' and o['odds_max'] == '' for o in C.parse_odds(presale))
+    assert {o['odds'] for o in C.parse_odds(full) if o['bet_type'] == '3連単'} != {''}
+    N.URL_MEMO = os.path.join(tempfile.mkdtemp(), 'memo.json')
+    pages.update(racecard=presale, odds=full, raceresult=full)
+    out = json.loads(run(['取手', '5', '--date', '20991231', '--json']))
+    assert out['ok'] and not out['market_ok'] and not out['bets'] and out['warnings'], out
+    assert len(calls) == 2, calls  # トップ + racecard の1回だけ
+    print('✔ 発売前の仮オッズ（9999.9倍）は使わず、モデルのみで判定')
     print('\nall passed')
 
 

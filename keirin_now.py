@@ -29,11 +29,12 @@ import keirin_collector as C  # noqa: E402
 import keirin_engine as E  # noqa: E402
 
 # 発走前のレースページの候補（WINTICKETのURL構造が変わっても順に試す）。
+# 2026-10 の実ページで確認: racecard / odds のどちらも FETCH_KEIRIN_RACE（出走表）と
+# FETCH_KEIRIN_RACE_ODDS（最新オッズ）を含む。raceresult は旧来の結果ページ（予備）。
 # 最初に「出走表＋オッズ」が取れた形を .keirin_now_url.json に記憶して次回から優先する。
 URL_PATTERNS = [
     '{base}/keirin/{slug}/racecard/{cup}/{idx}/{rn}',
     '{base}/keirin/{slug}/odds/{cup}/{idx}/{rn}',
-    '{base}/keirin/{slug}/racecard/{cup}/{idx}/{rn}/odds',
     '{base}/keirin/{slug}/raceresult/{cup}/{idx}/{rn}',
 ]
 URL_MEMO = os.path.join(HERE, '.keirin_now_url.json')
@@ -112,8 +113,10 @@ def fetch_race(cup, rn, debug=False):
             state_used = state
         if o and any(x['bet_type'] == '3連単' and x['odds'] != '' for x in o):
             odds = o
-            if cards is None and c:
-                cards = c
+            _remember(pat)
+            break
+        if c and C.get_query_data(state, 'FETCH_KEIRIN_RACE_ODDS') is not None:
+            # オッズ欄はあるが投票が未集計（発売前など）。他のURLでも同じなので、ここで打ち切る
             _remember(pat)
             break
     return cards, odds or [], meta, state_used
