@@ -1,0 +1,203 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+backfill.py — 競輪過去データ遡り収集スクリプト
+
+==============================================================================
+【利用上の注意】keirin_collector.py 冒頭の注意事項がそのまま適用されます。
+私的使用の範囲で、取得先の規約を確認のうえ自己責任でご利用ください。
+==============================================================================
+
+仕組み:
+  開催ID(cupId)は「開始日YYYYMMDD + 場コード2桁」で構成されているため、
+  過去の日付について全43場を順に試し撃ちすれば、その日に始まった開催を
+  すべて発見できる。発見した開催は全日程・全レースを収集する。
+
+動き方:
+  * 1回の実行で BACKFILL_DAYS 日分(デフォルト8日)の「開始日」を探索
+  * どこまで遡ったかは data/backfill_progress.json に記録され、
+    次回実行時は続きから自動再開(中断・失敗しても安全)
+  * BACKFILL_LIMIT_DATE(デフォルト365日前)まで達したら自動停止
+  * 収集済みレースは重複保存されない(append_csvのキー重複チェック)
+
+環境変数:
+  BACKFILL_DAYS        1回で探索する日数(デフォルト 12)
+  BACKFILL_LIMIT_DATE  どこまで遡るか YYYYMMDD(デフォルト 365日前)
+  BACKFILL_MAX_MINUTES 実行時間の上限・分(デフォルト 300)
+"""
+
+import json
+import os
+import sys
+import time
+from datetime import datetime, timedelta
+from pathlib import Path
+from urllib.error import HTTPError
+
+from keirin_collector import (
+    BASE_URL, DATA_DIR, JST, VENUE_SLUGS, VENUE_NAMES,
+    fetch_html, extract_state, get_query_data,
+    parse_racecard, parse_result, parse_race_meta, parse_odds, append_csv,
+)
+
+PROGRESS_FILE = DATA_DIR / "backfill_progress.json"
+PROBE_INTERVAL = 1.0   # 試し撃ち(存在確認)の間隔
+PAGE_INTERVAL = 1.0    # 実データ取得の間隔。マナーの下限が1秒。これ以上縮めないこと
+
+parse_fail_count = 0   # 200が返るのに解析できない件数(構造変更の検知用)
+
+
+def load_cursor() -> str:
+    """次に探索する開始日を返す(初回は昨日から)"""
+    if PROGRESS_FILE.exists():
+        return json.loads(PROGRESS_FILE.read_text())["cursor"]
+    return (datetime.now(JST) - timedelta(days=1)).strftime("%Y%m%d")
+
+
+def save_cursor(cursor: str):
+    PROGRESS_FILE.parent.mkdir(parents=True, exist_ok=True)
+    PROGRESS_FILE.write_text(json.dumps(
+        {"cursor": cursor, "updated": datetime.now(JST).isoformat()},
+        ensure_ascii=False))
+
+
+def discover_cups(date_str: str) -> list:
+    """date_strを初日とする開催を全場試し撃ちで発見する。
+    戻り値: [(cup_id, venue_id, slug, 初日1Rのstate), ...]"""
+    global parse_fail_count
+    found = []
+    for vid, slug in VENUE_SLUGS.items():
+        cup_id = f"{date_str}{vid}"
+        url = f"{BASE_URL}/keirin/{slug}/raceresult/{cup_id}/1/1"
+        try:
+            html = fetch_html(url, interval=PROBE_INTERVAL)
+        except HTTPError as e:
+            if e.code == 404:
+                continue  # この場でこの日に始まる開催はない(正常)
+            print(f"    ! HTTP {e.code}: {VENUE_NAMES[vid]}")
+            continue
+        except Exception as e:
+            print(f"    ! 取得エラー({VENUE_NAMES[vid]}): {e}")
+            continue
+        try:
+            state = extract_state(html)
+        except ValueError:
+            parse_fail_count += 1
+            print(f"    ! 解析失敗({VENUE_NAMES[vid]}) ※累計{parse_fail_count}")
+            continue
+        found.append((cup_id, vid, slug, state))
+    return found
+
+
+def collect_cup(cup_id: str, venue_id: str, slug: str, first_state) -> dict:
+    """発見した開催の全日程・全レースを収集して年別CSVに保存する"""
+    cr = get_query_data(first_state, "FETCH_KEIRIN_CUP_RACES")
+    if not cr:
+        raise ValueError("開催情報(FETCH_KEIRIN_CUP_RACES)が見つかりません")
+    cup, schedules, races = cr["cup"], cr["schedules"], cr["races"]
+    today = datetime.now(JST).strftime("%Y%m%d")
+    print(f"  ◆ {VENUE_NAMES[venue_id]}「{cup.get('name','')}」"
+          f" {cup['startDate']}〜{cup['endDate']}")
+
+    rows_by_year = {}  # year -> {"meta": [], "cards": [], "orders": [], "payoffs": [], "odds": []}
+
+    for sched in schedules:
+        if sched["date"] >= today:
+            continue  # 当日・未来分は毎日の通常収集に任せる
+        index = sched.get("index") or sched.get("day")
+        n_races = sum(1 for r in races if r.get("scheduleId") == sched["id"]) or 12
+        cup_info = {
+            "cup_id": cup_id, "cup_name": cup.get("name", ""),
+            "venue_id": venue_id, "venue_name": VENUE_NAMES[venue_id],
+            "venue_slug": slug, "grade": cup.get("grade", ""), "index": index,
+        }
+        year = sched["date"][:4]
+        bucket = rows_by_year.setdefault(
+            year, {"meta": [], "cards": [], "orders": [], "payoffs": [], "odds": []})
+
+        for rn in range(1, n_races + 1):
+            if index == 1 and rn == 1:
+                state = first_state  # 試し撃ちで取得済み
+            else:
+                url = (f"{BASE_URL}/keirin/{slug}/raceresult/"
+                       f"{cup_id}/{index}/{rn}")
+                try:
+                    state = extract_state(fetch_html(url, interval=PAGE_INTERVAL))
+                except Exception as e:
+                    print(f"    ! {index}日目{rn}R 取得失敗: {e}")
+                    continue
+            try:
+                meta = parse_race_meta(state, cup_info)
+                cards = parse_racecard(state)
+                result = parse_result(state)
+                odds = parse_odds(state)
+            except Exception as e:
+                print(f"    ! {index}日目{rn}R 解析失敗: {e}")
+                continue
+            if not result["orders"]:
+                continue  # 中止・結果なし
+            bucket["meta"].append(meta)
+            bucket["cards"].extend(cards)
+            bucket["orders"].extend(result["orders"])
+            bucket["payoffs"].extend(result["payoffs"])
+            bucket["odds"].extend(odds)
+
+    # 年別フォルダに保存(開催単位でまとめて追記)
+    saved = 0
+    for year, b in rows_by_year.items():
+        ydir = DATA_DIR / year
+        saved += append_csv(ydir / "races.csv", b["meta"], ["race_id"])
+        append_csv(ydir / "racecards.csv", b["cards"], ["race_id", "car_number"])
+        append_csv(ydir / "results.csv", b["orders"], ["race_id", "car_number"])
+        append_csv(ydir / "payoffs.csv", b["payoffs"],
+                   ["race_id", "bet_type", "combination"])
+        append_csv(ydir / "odds.csv", b["odds"],
+                   ["race_id", "bet_type", "combination"])
+    print(f"    → {saved}レース保存")
+    return {"races": saved}
+
+
+def main():
+    days = int(os.environ.get("BACKFILL_DAYS", "12"))
+    max_minutes = int(os.environ.get("BACKFILL_MAX_MINUTES", "300"))
+    default_limit = (datetime.now(JST) - timedelta(days=365)).strftime("%Y%m%d")
+    limit_date = os.environ.get("BACKFILL_LIMIT_DATE", default_limit)
+
+    cursor = load_cursor()
+    started = time.time()
+    print(f"=== 遡り収集: {cursor} から過去へ {days}日分 (限界日 {limit_date}) ===")
+
+    total_races = 0
+    for _ in range(days):
+        if cursor < limit_date:
+            print(f"\n限界日({limit_date})に到達しました。遡り収集は完了です!")
+            break
+        if (time.time() - started) / 60 > max_minutes:
+            print(f"\n実行時間上限({max_minutes}分)に達したため今回はここまで。"
+                  f"次回 {cursor} から再開します。")
+            break
+        if parse_fail_count > 30:
+            print("\n! 解析失敗が多発しています。サイト構造が変わった可能性が"
+                  "あるため中断します。スクリプトの更新が必要かもしれません。")
+            sys.exit(1)
+
+        print(f"\n--- {cursor} を初日とする開催を探索 ---")
+        cups = discover_cups(cursor)
+        if not cups:
+            print("  (この日に始まる開催なし)")
+        for cup_id, vid, slug, state in cups:
+            try:
+                r = collect_cup(cup_id, vid, slug, state)
+                total_races += r["races"]
+            except Exception as e:
+                print(f"  ! 開催{cup_id}の収集失敗: {e}")
+
+        cursor = (datetime.strptime(cursor, "%Y%m%d")
+                  - timedelta(days=1)).strftime("%Y%m%d")
+        save_cursor(cursor)  # 1日分終わるごとに進捗保存(再開可能)
+
+    print(f"\n=== 今回の収集合計: {total_races}レース / 次回は {cursor} から ===")
+
+
+if __name__ == "__main__":
+    main()
