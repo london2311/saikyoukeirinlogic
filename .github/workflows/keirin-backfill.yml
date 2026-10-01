@@ -1,0 +1,45 @@
+# 過去へ遡ってデータを集める（手動実行）。オッズも data/YYYY/odds/odds_YYYYMMDD.csv に日別保存。
+name: keirin-backfill
+
+on:
+  workflow_dispatch:
+    inputs:
+      target_total:
+        description: "累計レース数の目標"
+        required: false
+        default: "10000"
+      max_minutes:
+        description: "1回の実行時間の上限（分）"
+        required: false
+        default: "330"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: keirin-data
+  cancel-in-progress: false
+
+jobs:
+  backfill:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: 遡り収集
+        env:
+          TARGET_TOTAL_RACES: ${{ inputs.target_total }}
+          BACKFILL_MAX_MINUTES: ${{ inputs.max_minutes }}
+        run: python backfill_until_total.py
+      - name: コミット
+        if: always()
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data
+          if git diff --cached --quiet; then echo "変更なし"; exit 0; fi
+          git commit -m "data: 遡り収集 $(date -u -d '+9 hours' +%Y-%m-%d)"
+          for i in 1 2 3; do git pull --rebase && git push && break; sleep 5; done

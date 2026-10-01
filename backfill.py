@@ -38,6 +38,7 @@ from keirin_collector import (
     BASE_URL, DATA_DIR, JST, VENUE_SLUGS, VENUE_NAMES,
     fetch_html, extract_state, get_query_data,
     parse_racecard, parse_result, parse_race_meta, parse_odds, append_csv,
+    append_odds_csv,
 )
 
 PROGRESS_FILE = DATA_DIR / "backfill_progress.json"
@@ -151,8 +152,8 @@ def collect_cup(cup_id: str, venue_id: str, slug: str, first_state) -> dict:
         append_csv(ydir / "results.csv", b["orders"], ["race_id", "car_number"])
         append_csv(ydir / "payoffs.csv", b["payoffs"],
                    ["race_id", "bet_type", "combination"])
-        append_csv(ydir / "odds.csv", b["odds"],
-                   ["race_id", "bet_type", "combination"])
+        # v104: 日次収集と同じ日別ファイルに保存（data/YYYY/odds/odds_YYYYMMDD.csv）
+        append_odds_csv(b["odds"])
     print(f"    → {saved}レース保存")
     return {"races": saved}
 

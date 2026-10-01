@@ -14,6 +14,7 @@
 
 使い方:
   python3 analysis/train_model.py            # リポジトリ直下・data/ 配下のCSVを自動検出
+  python3 analysis/train_model.py --embed    # 学習後、index.html の KEIRIN_V104_MODEL も自動で書き換える
   → analysis/model_v104.json（ブラウザ版に埋め込む係数）
   → analysis/report_v104.md（検証レポート）
 
@@ -46,12 +47,21 @@ VENUE_PREFECTURE = {
 TAKEOUT = 0.75
 
 # ------------------------------------------------------------ データ読み込み
+# 判定順に注意: 新形式のオッズCSVは payoff 列も持つため、payoffs より先に odds を判定する
 SIGNATURES = {
     'races': {'venue_name', 'entries_number', 'start_at'},
     'cards': {'race_point', 'line_position', 'style'},
     'results': {'order', 'car_number', 'factor'},
+    'odds': {'combination', 'odds', 'bet_type'},
     'payoffs': {'bet_type', 'combination', 'payoff', 'popularity'},
-    'odds': {'bet_key', 'odds_id', 'odds'},
+}
+# 同じレースが複数ファイルに入っていても1件にまとめるためのキー
+DEDUP_KEYS = {
+    'races': ['race_id'],
+    'cards': ['race_id', 'car_number'],
+    'results': ['race_id', 'car_number'],
+    'odds': ['race_id', 'bet_type', 'combination'],
+    'payoffs': ['race_id', 'bet_type', 'combination'],
 }
 
 
@@ -72,8 +82,12 @@ def load_all(root):
     out = {}
     for kind, ps in found.items():
         frames = [pd.read_csv(p, encoding='utf-8-sig', dtype={'race_id': str, 'player_id': str, 'schedule_id': str}) for p in ps]
-        out[kind] = pd.concat(frames, ignore_index=True).drop_duplicates()
-        print(f'[load] {kind}: {len(out[kind])}行 ← {", ".join(os.path.relpath(p, root) for p in ps)}')
+        df = pd.concat(frames, ignore_index=True)
+        if kind == 'odds':
+            df['odds'] = pd.to_numeric(df['odds'], errors='coerce')
+        out[kind] = df.drop_duplicates(subset=DEDUP_KEYS[kind], keep='last')
+        names = [os.path.relpath(p, root) for p in ps]
+        print(f'[load] {kind}: {len(out[kind])}行 ← {", ".join(names[:3])}{" ほか%d件" % (len(names) - 3) if len(names) > 3 else ""}')
     return out
 
 
@@ -600,5 +614,23 @@ def main():
     print('\n'.join(L))
 
 
+def embed_model(model_json):
+    """index.html の const KEIRIN_V104_MODEL = {...}; を学習結果で置き換える"""
+    import re
+    path = os.path.join(ROOT, 'index.html')
+    with open(path, encoding='utf-8') as f:
+        html = f.read()
+    new = 'const KEIRIN_V104_MODEL = ' + json.dumps(model_json, ensure_ascii=False, separators=(',', ':')) + ';\n'
+    html2, n = re.subn(r'const KEIRIN_V104_MODEL = \{.*?\};\n', lambda m: new, html, count=1, flags=re.S)
+    if n != 1:
+        sys.exit('index.html に KEIRIN_V104_MODEL が見つかりません')
+    with open(path, 'w', encoding='utf-8') as f:
+        f.write(html2)
+    print('[embed] index.html のモデル係数を更新しました')
+
+
 if __name__ == '__main__':
     main()
+    if '--embed' in sys.argv:
+        with open(os.path.join(OUT_DIR, 'model_v104.json'), encoding='utf-8') as f:
+            embed_model(json.load(f))

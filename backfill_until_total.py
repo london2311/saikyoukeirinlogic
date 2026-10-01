@@ -7,7 +7,7 @@ backfill_until_total.py — 総レース数が目標件数に届くまで過去�
 - 既存の data/YYYY/races.csv を数えて、累計 TARGET_TOTAL_RACES まで収集。
 - GitHub Actionsの時間制限を考慮し、BACKFILL_MAX_MINUTES で安全停止。
 - data/backfill_progress.json のカーソルから再開するので、何度Runしても続きから進む。
-- オッズは keirin_collector.append_odds_csv により data/YYYY/odds_YYYYMM.csv へ月別分割保存。
+- オッズは keirin_collector.append_odds_csv により data/YYYY/odds/odds_YYYYMMDD.csv へ日別分割保存。
 """
 
 import csv

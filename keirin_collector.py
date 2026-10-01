@@ -348,13 +348,57 @@ def parse_racecard(state: dict) -> list:
         })
     return rows
 
+def _num(v):
+    """数値に変換できれば float、できなければ None"""
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return None
+
+
+def _range(v):
+    """ワイド倍率の幅を (最低, 最高) で返す。"1.2-1.5" / "1.2〜1.5" / {"min":..,"max":..} / [lo, hi] に対応。"""
+    if isinstance(v, dict):
+        return _num(_pick(v, "min", "low", "lower", default=None)), _num(_pick(v, "max", "high", "upper", default=None))
+    if isinstance(v, (list, tuple)) and len(v) == 2:
+        return _num(v[0]), _num(v[1])
+    if isinstance(v, str):
+        parts = re.split(r"\s*[-〜~ー－]\s*", v.strip())
+        if len(parts) == 2:
+            return _num(parts[0]), _num(parts[1])
+    return _num(v), None
+
+
+# オッズ値の候補キー（WINTICKET側のキー名変更に備えて防御的に探す）
+ODDS_VALUE_KEYS = ("odds", "oddsValue", "value")
+ODDS_MIN_KEYS = ("minOdds", "oddsMin", "lowerOdds", "lowOdds", "minimumOdds", "odds", "oddsValue")
+ODDS_MAX_KEYS = ("maxOdds", "oddsMax", "upperOdds", "highOdds", "maximumOdds")
+
+
+def _debug_odds_keys_once(bet_key: str, item: dict):
+    """DEBUG_ODDS_KEYS=1 の時だけ、券種ごとに最初のオッズ要素のキーをログに出す。"""
+    if os.environ.get("DEBUG_ODDS_KEYS") != "1":
+        return
+    done = getattr(_debug_odds_keys_once, "done", set())
+    if bet_key in done:
+        return
+    done.add(bet_key)
+    _debug_odds_keys_once.done = done
+    print(f"[DEBUG] odds item ({bet_key}):", json.dumps(item, ensure_ascii=False)[:500])
+
+
 def parse_odds(state: dict) -> list:
     """結果ページのステートから全オッズを返す。
     1行 = 1レース × 1賭式 × 1組み合わせ。
 
-    注意:
-      結果ページから取得できるのは、基本的に締切後に残っている最終オッズです。
-      時間変化を取りたい場合は、発走前に定期実行する別スクリプトが必要です。
+    v104修正:
+      * 旧版は odds = payoffUnitPrice or odds の順で取っていたため、
+        的中組だけ「払戻金額(円)」が odds 列に入り、オッズとして使えなかった。
+        → odds 列は常に「倍率」、払戻金額は payoff 列に分けて保存する。
+      * ワイドは倍率が幅(最低〜最高)で表示されるため、odds=最低倍率 / odds_max=最高倍率。
+        倍率キーが見つからない的中組は 払戻/100（確定倍率）で補完する。
+      * 結果ページのオッズは締切後の最終オッズ。着順・払戻と同じページから取るため、
+        オッズと結果は必ず同じレースでそろう。
     """
     race_data = get_query_data(state, "FETCH_KEIRIN_RACE")
     odds_data = get_query_data(state, "FETCH_KEIRIN_RACE_ODDS")
@@ -366,35 +410,39 @@ def parse_odds(state: dict) -> list:
     race_date = start.strftime("%Y%m%d") if start else ""
     rows = []
     for bet_key, bet_name in BET_TYPES.items():
+        win_ids = set(race_data.get(f"{bet_key}WinningOddsIds") or [])
         for o in odds_data.get(bet_key, []) or []:
+            _debug_odds_keys_once(bet_key, o)
             key = o.get("key", [])
-            if isinstance(key, list):
-                combination = "-".join(map(str, key))
+            combination = "-".join(map(str, key)) if isinstance(key, list) else str(key)
+            is_win = o.get("id") in win_ids
+            payoff = _num(o.get("payoffUnitPrice")) if is_win else None
+
+            if bet_key == "quinellaPlace":
+                lo, hi = _range(_pick(o, *ODDS_MIN_KEYS, default=None))
+                hi_alt = _num(_pick(o, *ODDS_MAX_KEYS, default=None))
+                hi = hi_alt if hi_alt is not None else hi
             else:
-                combination = str(key)
+                lo = _num(_pick(o, *ODDS_VALUE_KEYS, default=None))
+                hi = None
+            # 旧データ互換: odds に払戻金額が入っている場合は倍率に直す
+            if lo is not None and payoff and abs(lo - payoff) < 1e-6 and payoff >= 100:
+                lo = payoff / 100.0
+            if lo is None and payoff:
+                lo = payoff / 100.0
 
-            # WINTICKETのstateでは odds / oddsValue / payout 等、構造変更の可能性があるため
-            # まず既存のpayoffUnitPriceを最優先し、他の候補も防御的に見る。
-            odds_value = (
-                o.get("payoffUnitPrice")
-                or o.get("odds")
-                or o.get("oddsValue")
-                or o.get("payout")
-                or ""
-            )
-
+            absent = o.get("absent", False)
             rows.append({
                 "race_id": race["id"],
                 "date": race_date,
-                "schedule_id": race["scheduleId"],
                 "race_number": race["number"],
-                "bet_key": bet_key,
                 "bet_type": bet_name,
-                "odds_id": o.get("id", ""),
-                "combination": combination,          # 例: 7-4-5 / 2-5 / 1-3
-                "odds": odds_value,                 # 100円あたりの想定払戻額/オッズ値
+                "combination": combination,           # 例: 7-4-5 / 2-5 / 1-3
+                "odds": "" if lo is None else lo,      # 倍率（ワイドは最低倍率）
+                "odds_max": "" if hi is None else hi,  # ワイドの最高倍率
+                "payoff": "" if payoff is None else int(payoff),  # 的中組のみ: 100円あたり払戻(円)
                 "popularity": o.get("popularityOrder", ""),
-                "absent": int(o.get("absent", False)) if isinstance(o.get("absent", False), bool) else o.get("absent", ""),
+                "absent": int(absent) if isinstance(absent, bool) else absent,
             })
     return rows
 
@@ -559,24 +607,26 @@ def append_csv(path: Path, rows: list, key_fields: list):
 
 
 def append_odds_csv(rows: list):
-    """オッズCSVを月別に保存する。
+    """オッズCSVを日別に保存する。
 
-    10000レース規模では odds.csv がGitHubの100MB制限を超えやすいため、
-    data/YYYY/odds_YYYYMM.csv に分割して保存する。
-    例: data/2026/odds_202606.csv
+    v104: 月別ファイル(odds_YYYYMM.csv)は1か月で数十MBになり、ブラウザからの
+    アップロード上限(25MB)や追記時の全読み込みが重くなるため、日別に分割する。
+    例: data/2026/odds/odds_20260610.csv（1日あたり約2〜3MB）
+    日付は race_id 末尾8桁（開催日）からも補完する。
     """
     if not rows:
         return 0
     buckets = {}
     for r in rows:
-        d = str(r.get("date", ""))
-        ym = d[:6] if len(d) >= 6 else "unknown"
-        year = ym[:4] if len(ym) >= 4 else "unknown"
-        buckets.setdefault((year, ym), []).append(r)
+        d = str(r.get("date", "")) or str(r.get("race_id", ""))[-8:]
+        if not re.fullmatch(r"\d{8}", d):
+            d = "unknown"
+        buckets.setdefault(d, []).append(r)
 
     total = 0
-    for (year, ym), group in sorted(buckets.items()):
-        total += append_csv(DATA_DIR / year / f"odds_{ym}.csv", group,
+    for d, group in sorted(buckets.items()):
+        year = d[:4] if d != "unknown" else "unknown"
+        total += append_csv(DATA_DIR / year / "odds" / f"odds_{d}.csv", group,
                             ["race_id", "bet_type", "combination"])
     return total
 
@@ -599,6 +649,7 @@ def collect_date(target_date: str):
         print(f"  {c['venue_name']} {c['cup_name']} ({c['index']}日目)")
 
     all_meta, all_cards, all_orders, all_payoffs, all_odds = [], [], [], [], []
+    no_odds_races = []  # 結果はあるのに3連単オッズが取れなかったレース
 
     # 2. 開催ごとに各レースの結果ページを取得
     for cup in cups:
@@ -651,7 +702,10 @@ def collect_date(target_date: str):
             all_orders.extend(result["orders"])
             all_payoffs.extend(result["payoffs"])
             all_odds.extend(odds)
-            print(f"  {rn}R: 出走{len(cards)}名 / 払戻{len(result['payoffs'])}件 / オッズ{len(odds)}件 OK")
+            n3t = sum(1 for o in odds if o["bet_type"] == "3連単" and o["odds"] != "")
+            if n3t == 0:
+                no_odds_races.append(f"{cup['venue_name']}{rn}R")
+            print(f"  {rn}R: 出走{len(cards)}名 / 払戻{len(result['payoffs'])}件 / オッズ{len(odds)}件(3連単{n3t}) OK")
 
     # 3. CSVに保存(年別フォルダ。1ファイル100MB制限対策)
     year_dir = DATA_DIR / target_date[:4]
@@ -666,13 +720,18 @@ def collect_date(target_date: str):
                    ["race_id", "bet_type", "combination"])
     print(f"{target_date[:4]}/payoffs.csv    +{n}行")
     n = append_odds_csv(all_odds)
-    print(f"{target_date[:4]}/odds_YYYYMM.csv +{n}行")
+    print(f"{target_date[:4]}/odds/odds_{target_date}.csv +{n}行")
+    if no_odds_races:
+        print(f"! 3連単オッズが取れなかったレース {len(no_odds_races)}件: {', '.join(no_odds_races[:20])}")
+    print(f"結果とオッズがそろったレース: {len(all_meta) - len(no_odds_races)} / {len(all_meta)}")
 
 
 def main():
     # 引数で日付指定可(YYYYMMDD)。指定がなければ前日(JST)を収集。
-    if len(sys.argv) > 1:
-        target = sys.argv[1]
+    if len(sys.argv) > 1 and sys.argv[1].strip():
+        target = sys.argv[1].strip()
+        if not re.fullmatch(r"\d{8}", target):
+            sys.exit(f"日付は YYYYMMDD で指定してください: {target}")
     else:
         target = (datetime.now(JST) - timedelta(days=1)).strftime("%Y%m%d")
     collect_date(target)
