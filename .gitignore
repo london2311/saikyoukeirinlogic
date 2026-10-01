@@ -1,3 +1,4 @@
 analysis/backtest_cache.pkl
 __pycache__/
 *.pyc
+.keirin_now_url.json
