@@ -25,8 +25,13 @@ netkeirin 利用規約 第14条により、取得したデータは**私的利�
 | 1 | `/race/api_race_list.html?kaisai_date=YYYYMMDD&jyocd=…` | 開催場とレースID（場ごとに1回） |
 | 2 | `/race/entry/?race_id=…` | 出走表・並び予想（ライン） |
 | 3 | `/race/result/?race_id=…` | 着順・決まり手・SB・払戻・レース情報 |
+| 4 | `POST /api/race/`（`class=AplRaceOdds&method=get&compress=0&race_id=…`） | 最終オッズ（全券種・全組み合わせ・人気順） |
 
-1日あたり「開催場数 + レース数×2」回のアクセス（例: 7場 67レース → 141回・約7分）。
+手順4は、オッズページ（`/race/odds/`）上の netkeirin 自身の JavaScript がオッズ表示のために呼ぶのと
+同じ API・同じパラメータです（`compress=0` は同じ JS が持つ非圧縮の指定）。応答の `list_3`〜`list_9` が
+枠複・枠単・2車複・2車単・ワイド・3連複・3連単で、払戻と突き合わせて対応を確認しています。
+
+1日あたり「開催場数 + レース数×3」回のアクセス（例: 7場 67レース → 208回・約11分）。
 
 ### race_id の形式
 
@@ -45,7 +50,7 @@ data/YYYY/races.csv        1行 = 1レース
 data/YYYY/racecards.csv    1行 = 1選手
 data/YYYY/results.csv      1行 = 1選手の着順
 data/YYYY/payoffs.csv      1行 = 的中1組の払戻
-data/YYYY/odds/odds_YYYYMMDD.csv   （オッズ。下記「残課題」参照）
+data/YYYY/odds/odds_YYYYMMDD.csv   1行 = 1レース×1券種×1組み合わせ
 ```
 
 保存は `keirin_collector.py` の `append_csv` / `append_odds_csv` を再利用しています
@@ -89,7 +94,10 @@ combination（`3>1>2` は `3-1-2` に変換）, payoff（100円あたり）, pop
 | cancel | △ | 結果が無いレースは保存しないため常に 0 |
 | source | ○ | 追加列。`netkeirin` |
 
-**odds（最終オッズ）** — 残課題を参照。
+**odds（最終オッズ）**: 列 race_id, date, race_number, bet_type, combination, odds, odds_max, payoff,
+popularity, absent（既存と同じ）。3連単・3連複・2車単・2車複・ワイド・枠単・枠複の全組み合わせ。
+odds は常に倍率、ワイドは odds=最低 / odds_max=最高、的中組は payoff 列に 100円あたり払戻を入れる。
+倍率が 0（欠車を含む組など）は odds 空欄・absent=1。取得は結果確定後なので締切時の最終オッズ。
 
 ## GitHub Actions（.github/workflows/netkeirin-collect.yml）
 
@@ -129,14 +137,8 @@ python tests/netkeirin_test.py   # 架空のHTMLでの単体テスト（通信�
 
 ## 残課題
 
-1. **最終オッズ（3連単の全組み合わせ等）は未対応**（`ODDS_SUPPORTED = False`）。
-   netkeirin のオッズは HTML に含まれず、オッズページ上の JavaScript が
-   `https://keirin.netkeiba.com/api/race/` から読み込みます。その正規の呼び出し方（パラメータ・応答形式）は
-   配信元 JS（cdnv2.netkeiba.com）を読まないと確認できず、開発環境から取得できなかったため、
-   推測で API を叩くことはせず保留しています。確認でき次第 `fetch_odds` を実装します
-   （解析・保存側の `parse_odds_json` と CSV 形式は用意済み）。それまでは
-   `analysis/check_data.py` の「3連単オッズ」「全部そろい」は 0 になり、市場確率を使う融合・EV 検証には
-   netkeirin 期間のデータは使えません（出走表・着順・払戻だけで行う学習・検証は可能）。
+1. オッズ API はページの JavaScript から読み取った非公開の仕様なので、予告なく変わる可能性があります。
+   変わった場合はログの「オッズ取得失敗」が増えます（出走表・着順・払戻はそのまま保存されます）。
 2. line_type は推定値（上記）。race_type は対応表（RACE_TYPE_MAP）に無い表記だと WINTICKET と異なる表記のまま残る。
 3. 天候・風速は取れない。
 4. サイト構造の変更で解析が失敗した場合、ログの「失敗」件数が増えます。その時は解析処理の修正が必要です。

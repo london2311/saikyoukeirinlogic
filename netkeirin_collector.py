@@ -24,7 +24,9 @@ netkeirin_collector.py — 競輪データ収集スクリプト（netkeirin 版�
      コメント・並び予想（ライン）。
   3. 結果ページ（/race/result/?race_id=…）: 着順・着差・上り・決まり手・SB・払戻・
      レース情報（開催名・グレード・級・種別・距離・周回・発走時刻・開催何日目）。
-  4. オッズ: ODDS_SUPPORTED を参照（下記 fetch_odds の説明）。
+  4. 最終オッズ: オッズページ（/race/odds/）の JavaScript が読み込むのと同じ API
+     POST https://keirin.netkeiba.com/api/race/  class=AplRaceOdds&method=get&race_id=…
+     （compress=0 で非圧縮の JSON）。全券種の全組み合わせ・人気順が入っている。
 
 出力は keirin_collector.py（WINTICKET 版）と同じ CSV 形式・同じ列名。
 race_id は既存形式（レース番号2桁 + 場コード2桁 + 開催日8桁）に変換して保存するため、
@@ -58,10 +60,13 @@ REQUEST_INTERVAL = 3.0  # 秒。1リクエストごとにこれ以上空ける�
 JST = timezone(timedelta(hours=9))
 SOURCE = "netkeirin"
 
-# 3連単などの全組み合わせオッズは出走表/結果ページの HTML には無く、
-# オッズページ上の JavaScript が https://keirin.netkeiba.com/api/race/ から読み込む。
-# その正規の呼び出し方（パラメータ）を確認できるまでは取得しない（推測でAPIを叩かない）。
-ODDS_SUPPORTED = False
+# 全組み合わせのオッズは出走表/結果ページの HTML には無く、オッズページ上の JavaScript
+# （netkeirin の race_odds.min.js / race_api_indexdb.min.js）が次の API から読み込む。
+# ページと同じ呼び出し方（POST, class=AplRaceOdds, method=get）で取得する。
+ODDS_API = f"{BASE_URL}/api/race/"
+# 応答の list_N → 券種（N は netkeirin の式別コード。払戻と突き合わせて確認済み）
+ODDS_LISTS = {"list_3": "枠複", "list_4": "枠単", "list_5": "2車複", "list_6": "2車単",
+              "list_7": "ワイド", "list_8": "3連複", "list_9": "3連単"}
 
 # 府県の省略表記（netkeirin は3文字の府県を2文字で表示する）→ 既存データと同じ正式名
 PREF_FULL = {"神奈": "神奈川", "和歌": "和歌山", "鹿児": "鹿児島"}
@@ -109,15 +114,19 @@ class Blocked(Exception):
 _last_request = [0.0]
 
 
-def fetch(url: str, params: dict = None, interval: float = REQUEST_INTERVAL) -> str:
-    """GET して文字列を返す。直前のリクエストから interval 秒以上空ける。"""
+def fetch(url: str, params: dict = None, interval: float = REQUEST_INTERVAL, data: dict = None) -> str:
+    """GET（data を渡すと POST）して文字列を返す。直前のリクエストから interval 秒以上空ける。"""
     if params:
         url = url + ("&" if "?" in url else "?") + urlencode(params)
     wait = _last_request[0] + interval - time.monotonic()
     if wait > 0:
         time.sleep(wait)
-    print(f"  GET {url}")
-    req = Request(url, headers={"User-Agent": USER_AGENT, "Accept-Language": "ja"})
+    body_bytes = urlencode(data).encode() if data else None
+    if data:
+        print(f"  POST {url} race_id={data.get('race_id', '')}")
+    else:
+        print(f"  GET {url}")
+    req = Request(url, data=body_bytes, headers={"User-Agent": USER_AGENT, "Accept-Language": "ja"})
     try:
         with urlopen(req, timeout=30) as res:
             body = res.read()
@@ -513,35 +522,60 @@ def parse_race_meta(page_html: str, nk_race_id: str, entries_number=None) -> dic
 # ---------------------------------------------------------------- オッズ
 
 
-def parse_odds_json(data: dict, nk_race_id: str, payoffs: list = None) -> list:
-    """オッズ API の応答（JSON）→ odds CSV の行。
+def _combo(code: str) -> str:
+    """'030604' → '3-6-4'（2桁ずつの車番/枠番）。"""
+    code = str(code)
+    if not re.fullmatch(r"(\d\d){2,3}", code):
+        raise ValueError(f"組み合わせの形式が想定外: {code}")
+    return "-".join(str(int(code[k:k + 2])) for k in range(0, len(code), 2))
 
-    応答形式の確認が済むまで ODDS_SUPPORTED=False（fetch_odds は呼ばれない）。
-    想定形式: {"3連単": {"1-2-3": 6.8, ...}, "ワイド": {"1-2": [1.2, 1.5], ...}, ...}
-    （券種名は既存 bet_type、組は '-' 区切り）。
+
+def parse_odds_api(resp: dict, nk_race_id: str, payoffs: list = None) -> list:
+    """オッズ API の応答（compress=0 の JSON）→ odds CSV の行（既存形式）。
+
+    応答: {"status": "OK", "data": {"nkrace_odds::<race_id>": {"official_dt": …,
+           "list_9": [["010203", "434.9", "0", "110"], …], …}}}
+    各要素 = [組み合わせ, 倍率（ワイドは最低）, 最高倍率（ワイドのみ、他は0）, 人気順]。
+    odds は常に倍率、ワイドは odds=最低 / odds_max=最高、的中組の払戻は payoff 列。
+    倍率が 0 以下（欠車を含む組など）は odds を空欄・absent=1 にする。
     """
+    if not isinstance(resp, dict) or resp.get("status") == "NG":
+        raise ValueError("オッズ API の応答が NG")
+    body = (resp.get("data") or {}).get(f"nkrace_odds::{nk_race_id}")
+    if not isinstance(body, dict):
+        return []
     date, _venue, rn = split_race_id(nk_race_id)
     race_id = to_wt_race_id(nk_race_id)
     win = {(p["bet_type"], p["combination"]): p for p in (payoffs or [])}
     rows = []
-    for bet, combos in (data or {}).items():
-        for combo, v in combos.items():
-            lo, hi = (v[0], v[1]) if isinstance(v, (list, tuple)) else (v, None)
-            lo, hi = _num(lo), (_num(hi) if hi is not None else "")
+    for key, bet in ODDS_LISTS.items():
+        for item in body.get(key) or []:
+            combo = _combo(item[0])
+            lo = _num(item[1]) if len(item) > 1 else ""
+            hi = _num(item[2]) if (bet == "ワイド" and len(item) > 2) else ""
+            pop = _num(item[3]) if len(item) > 3 else ""
+            absent = 0
+            if lo == "" or lo <= 0:
+                lo, hi, absent = "", "", 1
+            if hi != "" and hi <= 0:
+                hi = ""
             p = win.get((bet, combo))
             rows.append({
                 "race_id": race_id, "date": date, "race_number": rn, "bet_type": bet,
                 "combination": combo, "odds": lo, "odds_max": hi,
-                "payoff": p["payoff"] if p else "", "popularity": "", "absent": 0,
+                "payoff": p["payoff"] if p else "",
+                "popularity": pop if pop not in ("", 0) else "",
+                "absent": absent,
             })
     return rows
 
 
 def fetch_odds(nk_race_id: str, payoffs: list) -> list:
-    """最終オッズを取得する（ODDS_SUPPORTED=True の時のみ）。"""
-    if not ODDS_SUPPORTED:
-        return []
-    raise NotImplementedError("オッズ API の呼び出し方が未確認です")
+    """最終オッズ（全券種・全組み合わせ）を取得する。"""
+    import json
+    text = fetch(ODDS_API, data={"input": "UTF-8", "output": "json", "class": "AplRaceOdds",
+                                 "method": "get", "compress": "0", "race_id": nk_race_id})
+    return parse_odds_api(json.loads(text), nk_race_id, payoffs)
 
 
 # ---------------------------------------------------------------- メイン
@@ -552,7 +586,7 @@ def collect_date(date: str, out_dir: Path) -> dict:
     KC.DATA_DIR = out_dir  # append_odds_csv の保存先
     race_ids = list_races(date)
     print(f"レース数（一覧）: {len(race_ids)} / 開催場数: {len({r[8:10] for r in race_ids})}")
-    stats = dict(races=0, failed=0, no_result=0, odds_races=0)
+    stats = dict(races=0, failed=0, no_result=0, odds_races=0, odds_failed=0)
     metas, cards, orders, payoffs, odds = [], [], [], [], []
     for nk in race_ids:
         try:
@@ -569,13 +603,20 @@ def collect_date(date: str, out_dir: Path) -> dict:
                 if row["car_number"] in absent_cars:
                     row["absent"] = 1
             m = parse_race_meta(result, nk, entries_number=len(c))
-            o = fetch_odds(nk, r["payoffs"])
         except Blocked:
             raise
         except (HTTPError, URLError, ValueError, AttributeError, IndexError) as e:
             stats["failed"] += 1
             print(f"  ! {nk}: 失敗 {type(e).__name__}")
             continue
+        try:
+            o = fetch_odds(nk, r["payoffs"])
+        except Blocked:
+            raise
+        except (HTTPError, URLError, ValueError, KeyError, IndexError, TypeError) as e:
+            o = []
+            stats["odds_failed"] += 1
+            print(f"  ! {nk}: オッズ取得失敗 {type(e).__name__}")
         metas.append(m)
         cards.extend(c)
         orders.extend(r["orders"])
@@ -583,7 +624,10 @@ def collect_date(date: str, out_dir: Path) -> dict:
         odds.extend(o)
         stats["races"] += 1
         n3 = sum(1 for x in o if x["bet_type"] == "3連単" and x["odds"] != "")
+        n_act = len(c) - sum(int(x["absent"]) for x in c)
+        full = n_act * (n_act - 1) * (n_act - 2)
         stats["odds_races"] += int(n3 > 0)
+        stats["odds_full"] = stats.get("odds_full", 0) + int(full > 0 and n3 >= full)
         print(f"  {nk}: 出走{len(c)} / 着順{len(r['orders'])} / 払戻{len(r['payoffs'])} / 3連単オッズ{n3}")
 
     year_dir = out_dir / date[:4]
@@ -594,9 +638,8 @@ def collect_date(date: str, out_dir: Path) -> dict:
     print(f"payoffs.csv    +{KC.append_csv(year_dir / 'payoffs.csv', payoffs, ['race_id', 'bet_type', 'combination'])}")
     print(f"odds           +{KC.append_odds_csv(odds)}")
     print(f"成功 {stats['races']} / 失敗 {stats['failed']} / 結果なし {stats['no_result']} / "
-          f"3連単オッズあり {stats['odds_races']}")
-    if not ODDS_SUPPORTED:
-        print("! オッズは未対応（ODDS_SUPPORTED=False）。README の残課題を参照。")
+          f"3連単オッズあり {stats['odds_races']}（全組そろい {stats.get('odds_full', 0)}） / "
+          f"オッズ取得失敗 {stats['odds_failed']}")
     return stats
 
 

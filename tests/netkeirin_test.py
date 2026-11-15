@@ -184,13 +184,41 @@ def test_accident():
     check(o[2]["order"] == 0 and o[2]["accident"] == "失格", "失格 → order 0 / accident 失格")
 
 
+def _fake_odds_api():
+    """オッズ API と同じ形の架空の応答（3車立て・全組み合わせ）。"""
+    import itertools
+    tri = [[f"{a:02d}{b:02d}{c:02d}", str(5.0 + i), "0", str(i + 1)]
+           for i, (a, b, c) in enumerate(itertools.permutations([1, 2, 3], 3))]
+    for t in tri:
+        if t[0] == "030102":
+            t[1], t[3] = "12.3", "4"
+    return {"status": "OK", "reason": "", "data": {
+        f"nkrace_odds::{NK}": {
+            "official_dt": "2099-01-01 21:36:00",
+            "list_9": tri,
+            "list_7": [["0103", "1.4", "1.6", "1"], ["0203", "2.0", "2.5", "2"], ["0102", "0", "0", "0"]],
+            "list_5": [["0103", "3.5", "0", "1"]],
+        },
+        f"nkrace_odds::{NK}_last_dt": "2099-01-01 21:40:00"}}
+
+
 def test_odds_json_and_save():
     payoffs = N.parse_result(RESULT_HTML, NK)["payoffs"]
-    rows = N.parse_odds_json({"3連単": {"3-1-2": 12.3, "1-2-3": 8.0}, "ワイド": {"1-3": [1.4, 1.6]}}, NK, payoffs)
-    w = next(r for r in rows if r["bet_type"] == "ワイド")
-    t = next(r for r in rows if r["combination"] == "3-1-2")
-    check(w["odds"] == 1.4 and w["odds_max"] == 1.6, "ワイド odds=最低 / odds_max=最高")
-    check(t["odds"] == 12.3 and t["payoff"] == 1230, "的中組の払戻は payoff 列、odds は倍率")
+    rows = N.parse_odds_api(_fake_odds_api(), NK, payoffs)
+    w = next(r for r in rows if r["bet_type"] == "ワイド" and r["combination"] == "1-3")
+    t = next(r for r in rows if r["bet_type"] == "3連単" and r["combination"] == "3-1-2")
+    check(sum(1 for r in rows if r["bet_type"] == "3連単") == 6, "3連単の全組み合わせ（3車→6通り）")
+    check(w["odds"] == 1.4 and w["odds_max"] == 1.6 and w["popularity"] == 1, "ワイド odds=最低 / odds_max=最高・人気")
+    check(t["odds"] == 12.3 and t["payoff"] == 1230 and t["popularity"] == 4, "的中組の払戻は payoff 列、odds は倍率")
+    z = next(r for r in rows if r["bet_type"] == "ワイド" and r["combination"] == "1-2")
+    check(z["odds"] == "" and z["absent"] == 1, "倍率0（欠車を含む組）は空欄・absent=1")
+    n2 = next(r for r in rows if r["bet_type"] == "2車複")
+    check(n2["odds_max"] == "" and n2["race_id"] == "079920990101" and n2["date"] == DATE, "ワイド以外は odds_max 空欄・ID")
+    try:
+        N.parse_odds_api({"status": "NG", "data": {}}, NK)
+        check(False, "NG 応答は例外")
+    except ValueError:
+        check(True, "NG 応答は例外")
     with tempfile.TemporaryDirectory() as d:
         KC.DATA_DIR = Path(d)
         KC.append_odds_csv(rows)
@@ -221,7 +249,12 @@ def test_collect_offline():
     pages = {"api_race_list": LIST_HTML.replace("209901019902", "209901019907").replace("209901019901", "209901019907"),
              "/race/entry/": ENTRY_HTML, "/race/result/": RESULT_HTML}
 
-    def fake_fetch(url, params=None, interval=0):
+    import json
+
+    def fake_fetch(url, params=None, interval=0, data=None):
+        if "/api/race/" in url:
+            assert data["class"] == "AplRaceOdds" and data["method"] == "get" and data["race_id"] == NK
+            return json.dumps(_fake_odds_api())
         for k, v in pages.items():
             if k in url:
                 return v
@@ -240,6 +273,8 @@ def test_collect_offline():
             check(len(rc) == 3 and rc[0]["race_id"] == "079920990101", "racecards.csv 保存")
             check(rs[0]["source"] == "netkeirin" and rs[0]["entries_number"] == "3", "races.csv 保存（source 列）")
             check((y / "results.csv").exists() and (y / "payoffs.csv").exists(), "results/payoffs 保存")
+            check(st["odds_races"] == 1 and st["odds_full"] == 1 and (y / "odds" / "odds_20990101.csv").exists(),
+                  "オッズ取得・保存（3連単 全組そろい）")
     finally:
         N.fetch = orig
 
