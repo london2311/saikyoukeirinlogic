@@ -173,7 +173,7 @@ def test_result_and_meta():
     m = N.parse_race_meta(RESULT_HTML, NK, entries_number=3)
     check(m["race_id"] == "079920990101" and m["date"] == DATE and m["venue_id"] == "99", "レース情報のID")
     check(m["cup_id"] == "2098123199" and m["day_index"] == 2, "開催ID（初日+場）・何日目")
-    check(m["grade"] == 2 and m["class"] == "A級" and m["race_type"] == "チャレンジ予選", "グレード・級・種別")
+    check(m["grade"] == 2 and m["class"] == "A級" and m["race_type"] == "チ予選", "グレード・級・種別")
     check(m["distance"] == 1625 and m["lap"] == 4 and m["start_at"] == "2099-01-01 21:35", "距離・周回・発走")
     check(m["cup_name"] == "架空記念杯" and m["source"] == "netkeirin" and m["weather"] == "", "開催名・取得元・天候なし")
 

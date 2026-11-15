@@ -84,7 +84,7 @@ combination（`3>1>2` は `3-1-2` に変換）, payoff（100円あたり）, pop
 |---|---|---|
 | race_id, date, venue_id, venue_name, race_number | ○ | |
 | cup_id, cup_name, grade, day_index | ○ | grade は既存と同じ数値（FII=1, FI=2, GIII=3, GII=4, GI=5, GP=6） |
-| class, race_type, distance, lap, start_at, entries_number | ○ | race_type は netkeirin の表記（例「チャレンジ予選」。WINTICKET は「チ予選」）|
+| class, race_type, distance, lap, start_at, entries_number | ○ | race_type は WINTICKET の略称に変換（チャレンジ予選→チ予選、ガールズ予選1→ガ予１、初日特別選抜→初特選 など。対応表に無い表記はそのまま）|
 | weather, wind_speed | × | netkeirin のページに無いため空欄 |
 | cancel | △ | 結果が無いレースは保存しないため常に 0 |
 | source | ○ | 追加列。`netkeirin` |
@@ -137,6 +137,6 @@ python tests/netkeirin_test.py   # 架空のHTMLでの単体テスト（通信�
    （解析・保存側の `parse_odds_json` と CSV 形式は用意済み）。それまでは
    `analysis/check_data.py` の「3連単オッズ」「全部そろい」は 0 になり、市場確率を使う融合・EV 検証には
    netkeirin 期間のデータは使えません（出走表・着順・払戻だけで行う学習・検証は可能）。
-2. line_type は推定値（上記）。race_type の表記が WINTICKET と一部異なる（分析で種別を条件に使う場合は注意）。
+2. line_type は推定値（上記）。race_type は対応表（RACE_TYPE_MAP）に無い表記だと WINTICKET と異なる表記のまま残る。
 3. 天候・風速は取れない。
 4. サイト構造の変更で解析が失敗した場合、ログの「失敗」件数が増えます。その時は解析処理の修正が必要です。

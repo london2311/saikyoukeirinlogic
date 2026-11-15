@@ -84,6 +84,22 @@ BET_NAME_MAP = {"3連単": "3連単", "3連複": "3連複", "2車単": "2車単"
                 "ワイド": "ワイド", "枠単": "枠単", "枠複": "枠複"}
 
 
+# 種別の表記 → 既存データ（WINTICKET）の略称。該当しなければ netkeirin の表記のまま
+RACE_TYPE_MAP = {
+    "チャレンジ予選": "チ予選", "チャレンジ一般": "チ一般", "チャレンジ選抜": "チ選抜",
+    "チャレンジ準決勝": "チ準決", "チャレンジ決勝": "チ決勝",
+    "ガールズ予選1": "ガ予１", "ガールズ予選2": "ガ予２", "ガールズ一般": "ガ一般",
+    "ガールズ決勝": "ガ決勝", "ガールズ選抜": "ガ選抜",
+    "初日特別選抜": "初特選", "一次予選": "一予選", "二次予選": "二予選",
+    "二次予選A": "二予Ａ", "二次予選B": "二予Ｂ", "特別優秀": "特秀", "特選予選": "特選予",
+}
+
+
+def normalize_race_type(t: str) -> str:
+    t = re.sub(r"\s+", "", unicodedata.normalize("NFKC", t or ""))
+    return RACE_TYPE_MAP.get(t, t)
+
+
 class Blocked(Exception):
     """サーバーから拒否（403/429 等）された。回避せず中断する。"""
 
@@ -482,7 +498,7 @@ def parse_race_meta(page_html: str, nk_race_id: str, entries_number=None) -> dic
         "day_index": day_index,
         "race_number": rn,
         "class": (cls_m.group(1) + "級") if cls_m else "",
-        "race_type": re.sub(r"\s+", "", cls_m.group(2)) if cls_m else race_name,
+        "race_type": normalize_race_type(cls_m.group(2) if cls_m else race_name),
         "distance": int(dist.group(1)) if dist else "",
         "lap": int(lap.group(1)) if lap else "",
         "entries_number": entries_number if entries_number is not None else "",
