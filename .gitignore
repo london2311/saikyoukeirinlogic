@@ -3,3 +3,6 @@ __pycache__/
 *.pyc
 .keirin_now_url.json
 analysis/out/
+
+# netkeirin 収集データ（非公開リポジトリ）のチェックアウト先。公開側に入れない
+_data_repo/
