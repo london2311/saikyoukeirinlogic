@@ -1,0 +1,96 @@
+# 毎朝、前日の全レース（出走表・着順・払戻）を netkeirin から収集し、
+# 非公開のデータ用リポジトリ（vars.DATA_REPO、例 london2311/datebase）にだけコミットする。
+#
+# 重要: netkeirin 利用規約により、データは私的利用の範囲内でのみ利用できる。
+#   * このリポジトリ（公開）には何もコミットしない（データ用リポジトリだけに push する）。
+#   * ログにはレースの中身を出さない（URL・件数・成功/失敗だけ）。
+#   * DATA_REPO / DATA_REPO_TOKEN が未設定なら何もせず終了する。
+name: netkeirin-collect
+
+on:
+  schedule:
+    - cron: "17 21 * * *"   # 毎日 06:17 JST（前日分）
+  workflow_dispatch:
+    inputs:
+      date:
+        description: "収集する日 YYYYMMDD（空欄なら前日）"
+        required: false
+        default: ""
+      date_from:
+        description: "期間指定の開始日 YYYYMMDD（指定時は date より優先）"
+        required: false
+        default: ""
+      date_to:
+        description: "期間指定の終了日 YYYYMMDD（空欄なら前日）"
+        required: false
+        default: ""
+
+permissions:
+  contents: read   # 公開リポジトリには書き込まない
+
+concurrency:
+  group: netkeirin-data
+  cancel-in-progress: false
+
+jobs:
+  collect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - name: 設定の確認
+        id: cfg
+        env:
+          DATA_REPO: ${{ vars.DATA_REPO }}
+          HAS_TOKEN: ${{ secrets.DATA_REPO_TOKEN != '' }}
+        run: |
+          if [ -z "$DATA_REPO" ] || [ "$HAS_TOKEN" != "true" ]; then
+            echo "::warning::設定が必要です: Variables に DATA_REPO（例 london2311/datebase）、Secrets に DATA_REPO_TOKEN を登録してください。データを公開側に書かないため、何もせず終了します。"
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "ok=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/checkout@v4
+        if: steps.cfg.outputs.ok == 'true'
+
+      - name: データ用リポジトリ（非公開）を取得
+        if: steps.cfg.outputs.ok == 'true'
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ vars.DATA_REPO }}
+          token: ${{ secrets.DATA_REPO_TOKEN }}
+          path: _data_repo
+
+      - uses: actions/setup-python@v5
+        if: steps.cfg.outputs.ok == 'true'
+        with:
+          python-version: "3.12"
+
+      - name: 収集（保存先は _data_repo/data のみ）
+        if: steps.cfg.outputs.ok == 'true'
+        env:
+          TARGET_DATE: ${{ inputs.date }}
+          DATE_FROM: ${{ inputs.date_from }}
+          DATE_TO: ${{ inputs.date_to }}
+        run: |
+          set -o pipefail
+          args=(--out-dir _data_repo/data)
+          if [ -n "$DATE_FROM" ]; then
+            args+=(--from "$DATE_FROM")
+            [ -n "$DATE_TO" ] && args+=(--to "$DATE_TO")
+          elif [ -n "$TARGET_DATE" ]; then
+            args+=(--date "$TARGET_DATE")
+          fi
+          python netkeirin_collector.py "${args[@]}"
+
+      - name: データ用リポジトリにコミット
+        if: steps.cfg.outputs.ok == 'true'
+        working-directory: _data_repo
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data
+          if git diff --cached --quiet; then echo "変更なし"; exit 0; fi
+          echo "変更ファイル数: $(git diff --cached --name-only | wc -l)"
+          git commit -q -m "data: netkeirin 収集 $(date -u -d '+9 hours' +%Y-%m-%d)"
+          for i in 1 2 3; do git pull -q --rebase && git push -q && break; sleep 5; done
