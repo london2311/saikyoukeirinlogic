@@ -1,0 +1,20 @@
+# 競輪データの取得元候補を GitHub Actions（海外）から調べる。調査用のファイルを変更して push した時と手動で実行。
+name: probe-sources
+on:
+  push:
+    paths:
+      - tools/probe_sources.py
+      - .github/workflows/probe-sources.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python tools/probe_sources.py
