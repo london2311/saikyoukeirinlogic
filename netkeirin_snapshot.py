@@ -165,7 +165,7 @@ def main(argv=None, clock=None, sleep=time.sleep):
         import csv
         with open(path, newline='', encoding='utf-8-sig') as f:
             done = {(row['race_id'], row['snap']) for row in csv.DictReader(f)}
-    races, listed_at, flushed_at = [], None, clock()
+    races, listed_at, flushed_at, finished = [], None, clock(), False
     stats = dict(snaps=0, failed=0)
     alerter = make_alerter(a) if a.alert else None
     site = make_site(a, date, alerter) if a.site else None
@@ -225,6 +225,7 @@ def main(argv=None, clock=None, sleep=time.sleep):
                             print(f'  ! 期待値ボードの計算に失敗 {type(e).__name__}')
             if races and remaining(races, date, offsets, done_nk(), clock()) == 0:
                 print('今日の記録すべきレースは終わりました')
+                finished = True
                 break
             if a.flush_min and clock() - flushed_at >= timedelta(minutes=a.flush_min):
                 flush()
@@ -242,6 +243,28 @@ def main(argv=None, clock=None, sleep=time.sleep):
         if site is not None:
             site.flush()
             print(site.summary())
+    if site is not None and finished:
+        next_day_site(a, date, alerter)
+
+
+def next_day_site(a, date, alerter):
+    """今日のレースが終わったら、期待値ボードを翌日の全レースの予定に切り替える（オッズは翌日の締切15分前から）"""
+    nxt = (datetime.strptime(date, '%Y%m%d') + timedelta(days=1)).strftime('%Y%m%d')
+    try:
+        races = N.list_today(nxt)
+    except (N.HTTPError, N.URLError, ValueError) as e:
+        print(f'翌日（{nxt}）のレース一覧の取得に失敗 {type(e).__name__}（翌朝の記録で作ります）')
+        return False
+    if not races:
+        print(f'翌日（{nxt}）のレース一覧がまだありません（翌朝の記録で作ります）')
+        return False
+    site = make_site(a, nxt, alerter)
+    if site is None:
+        return False
+    site.set_races(races)
+    site.flush(force=True)
+    print(f'期待値ボード: 翌日（{nxt}）の予定 {len(races)}レースに切り替えました')
+    return True
 
 
 if __name__ == '__main__':
