@@ -266,7 +266,7 @@ h2 { font-size: 15px; margin: 16px 0 6px; }
       <div class="riders">${riders}</div>
       <div class="seg">${SNAPS.map((x) => `<button data-s="${x}" ${d.snaps[x] ? '' : 'disabled'} class="${x === st.snap ? 'on' : ''}">${SNAP_LABEL[x]}</button>`).join('')}</div>
       <div class="muted">取得 ${esc(s.at)} ／ ${s.market_ok ? 'オッズと融合済み' : '<span style="color:var(--bad);font-weight:700">3連単オッズ不足（参考値）</span>'}</div>
-      ${win}
+      ${win}${riderMemo(s)}
       <div class="seg" id="view"><button data-v="single" class="${view === 'single' ? 'on' : ''}">1点ごと</button>
       <button data-v="group" class="${view === 'group' ? 'on' : ''}">買い目群（合成オッズ）</button></div>${evControl()}</div>${strat}${tables}
       <p class="note">EV＝当たる確率×確定予想オッズ（締切後の下落を過去の記録から見込んだ倍率。「今→確定予想」で表示。学習前は今のオッズ）。ワイドは最低倍率。「買い基準」＝EVが1.10になる倍率。表示は「表示する期待値」以上・確率0.5%以上・300倍以下（「全○組を表示」で全部）。</p></main>`;
@@ -315,8 +315,27 @@ h2 { font-size: 15px; margin: 16px 0 6px; }
           <div style="margin-top:6px" class="combos">${r.group ? r.keys.slice(0, 8).map((k) => combo(r.bt, k)).join('') + (r.keys.length > 8 ? ` <span class="muted">ほか${r.keys.length - 8}点</span>` : '') : combo(r.bt, r.keys[0], true)}</div></div>
         <div style="text-align:right">${evb(r.ev)}<div class="buy">${r.group ? '合成 ' + x1(r.od) + '倍' : '今 ' + x1(r.od) + '倍'}</div>${!r.group && r.of != null && Math.abs(r.of - r.od) >= 0.05 ? `<div class="muted">確定予想 ${x1(r.of)}倍</div>` : ''}</div>
         <div class="line2">${r.group ? `${r.keys.length}点・的中 ${pct(r.P)}・${esc(r.lab)}` : `当たる確率 ${r.P != null ? pct(r.P) : '-'}・<b>${x1(r.line)}倍以上なら買い</b>${r.lab ? '・' + esc(r.lab) : ''}`}</div>
+        ${whyHtml(s, r)}
       </div>`; }).join('')}
       <div class="muted">1点100円など少額・一定額で。締切直前にもう一度倍率を確認し、基準を下回ったら見送り。</div></div>`;
+  }
+  // 「なぜこの買い目か」: 買い目の説明と、関わる選手のメモ
+  function whyHtml(s, r) {
+    const w = s.why || {};
+    const tk = r.group ? [] : ((w.tickets || {})[r.bt + '|' + r.keys[0]] || []);
+    const cars = [...new Set(r.keys.flatMap((k) => k.split('-')))].slice(0, 4);
+    const rn = cars.map((c) => [c, (w.riders || {})[c] || []]).filter(([, v]) => v.length);
+    if (!tk.length && !rn.length) return '';
+    return `<details class="line2" style="grid-column:1/-1"><summary style="cursor:pointer;color:var(--accent);font-weight:700">💡 なぜこの買い目？</summary>
+      ${tk.length ? `<ul style="margin:6px 0 4px;padding-left:18px">${tk.map((x) => `<li>${esc(x)}</li>`).join('')}</ul>` : ''}
+      ${rn.map(([c, v]) => `<div style="display:flex;gap:8px;align-items:flex-start;margin-top:4px">${car(c)}<span style="flex:1">${v.map(esc).join(' ／ ')}</span></div>`).join('')}</details>`;
+  }
+  function riderMemo(s) {
+    const rs = (s.why || {}).riders || {};
+    const ks = Object.keys(rs).filter((k) => rs[k].length).sort((a, b) => a - b);
+    if (!ks.length) return '';
+    return `<details style="margin-top:6px"><summary style="cursor:pointer;color:var(--accent);font-weight:700">📝 選手メモ（得点・脚質・コメント・並び・関係）</summary>
+      ${ks.map((c) => `<div style="display:flex;gap:8px;align-items:flex-start;margin-top:6px;font-size:13px">${car(c)}<span style="flex:1">${rs[c].map(esc).join(' ／ ')}</span></div>`).join('')}</details>`;
   }
   function typeTable(bt, rows) {
     if (!rows.length) return `<div class="card"><div class="th2" style="margin:0">${tbadge(bt)} <span class="muted" style="font-weight:normal">この時点のオッズがありません</span></div></div>`;

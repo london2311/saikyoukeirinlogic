@@ -164,8 +164,13 @@ class SiteBuilder:
         race = self._load(f'{wt}.enc') or dict(id=wt, venue=venue, rn=int(nk[10:12]), start=f'{start:%H:%M}', snaps={})
         race['deadline'] = f'{deadline:%H:%M}'
         race['riders'] = riders
+        try:
+            import reasons
+            why = reasons.build(cards, res)
+        except Exception:  # noqa: BLE001  説明が作れなくても数値は出す
+            why = {}
         race['snaps'][snap] = dict(at=f'{now:%H:%M:%S}', market_ok=bool(res.get('market_ok')), win=win, types=types,
-                                   hits=hits, strat=strat, groups=groups)
+                                   hits=hits, strat=strat, groups=groups, why=why)
         self._save(f'{wt}.enc', race)
         ent = self.index['races'].setdefault(wt, dict(venue=venue, rn=int(nk[10:12]), start=f'{start:%H:%M}', snaps=[], best=None))
         ent['deadline'] = f'{deadline:%H:%M}'

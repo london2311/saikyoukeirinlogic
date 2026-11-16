@@ -38,7 +38,15 @@ GROUPS = {
     'fall': ['after_fall'],
     'bank': ['bank_aff'],
     'chem': ['chem_rate', 'chem_n'],
+    # 選手コメント（本人の作戦の宣言）と、ライン内の先輩・後輩・同県の関係
+    'cmt': ['cmt_jiriki', 'cmt_jizai', 'cmt_kimezu', 'cmt_hojuu', 'cmt_follow'],
+    'rel': ['lead_senior_behind', 'ban_same_pref', 'ban_junior_lead'],
 }
+import re as _re
+JIRIKI = _re.compile(r'自力(?!自在)|自分で|前々|一人で|先行|逃げ')
+JIZAI = _re.compile(r'自在|取れた位置|流れ見て|位置から|臨機応変')
+KIMEZU = _re.compile(r'決めず')
+FOLLOW = _re.compile(r'君|さん|番手|付い|追走|任せ')
 KEYS = {'races': ['race_id'], 'cards': ['race_id', 'car_number'], 'results': ['race_id', 'car_number'],
         'payoffs': ['race_id', 'bet_type', 'combination'], 'odds': ['race_id', 'bet_type', 'combination']}
 
@@ -149,6 +157,37 @@ def history_features(s):
     return feats
 
 
+def card_features(D):
+    """出走表から、コメントとライン内の関係の特徴量 {(race_id, 車番): {...}}"""
+    c = D['cards'].copy()
+    c = c[pd.to_numeric(c['absent'], errors='coerce').fillna(0) == 0]
+    c['car'] = pd.to_numeric(c['car_number'], errors='coerce')
+    c['pos'] = pd.to_numeric(c['line_position'], errors='coerce')
+    c['term_n'] = pd.to_numeric(c['term'], errors='coerce')
+    single = pd.to_numeric(c['is_single'], errors='coerce').fillna(1) == 1
+    out = {}
+    lines = {}
+    for r in c[~single].itertuples(index=False):
+        lines.setdefault((r.race_id, r.line_order), {})[r.pos] = r
+    for r in c.itertuples(index=False):
+        cm = str(r.comment) if isinstance(r.comment, str) else ''
+        f = dict(cmt_jiriki=float(bool(JIRIKI.search(cm))), cmt_jizai=float(bool(JIZAI.search(cm)) and not JIRIKI.search(cm)),
+                 cmt_kimezu=float(bool(KIMEZU.search(cm))), cmt_hojuu=float('補充' in cm), cmt_follow=float(bool(FOLLOW.search(cm))),
+                 lead_senior_behind=0.0, ban_same_pref=0.0, ban_junior_lead=0.0)
+        L = lines.get((r.race_id, r.line_order)) if isinstance(r.line_order, str) else None
+        if L and r.pos == 1 and 2 in L:  # 先頭: 番手が先輩（期が小さい）
+            b = L[2]
+            if b.term_n == b.term_n and r.term_n == r.term_n and b.term_n < r.term_n:
+                f['lead_senior_behind'] = 1.0
+        if L and r.pos == 2 and 1 in L:  # 番手: 先頭と同県 / 先頭が後輩
+            a = L[1]
+            f['ban_same_pref'] = float(a.prefecture == r.prefecture)
+            if a.term_n == a.term_n and r.term_n == r.term_n and a.term_n > r.term_n:
+                f['ban_junior_lead'] = 1.0
+        out[(r.race_id, int(r.car))] = f
+    return out
+
+
 def augment(races, feats, names):
     """R['X'] の右に特徴量を足した新しいレース一覧（中心化はレース内平均を引く）"""
     out = []
@@ -215,7 +254,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--data', action='append', required=True)
     ap.add_argument('--start', type=int, default=202605)
-    ap.add_argument('--groups', default='form,agari,gap,fall,bank,chem')
+    ap.add_argument('--groups', default='form,agari,gap,fall,bank,chem,cmt,rel')
     ap.add_argument('--out', default=os.path.join(HERE, 'out'))
     a = ap.parse_args()
     os.makedirs(a.out, exist_ok=True)
@@ -227,6 +266,8 @@ def main():
     print(f'[data] レース {len(races)}（{min(R["date"] for R in races)}〜{max(R["date"] for R in races)}） {time.time() - t0:.0f}秒', flush=True)
     s = starts_table(D)
     feats = history_features(s)
+    for k, v in card_features(D).items():
+        feats.setdefault(k, {}).update(v)
     print(f'[hist] 出走 {len(s)} → 特徴量 {len(feats)} {time.time() - t0:.0f}秒', flush=True)
     oq = odds_q(D, {R['race_id'] for R in races})
     months = sorted({R['date'] // 100 for R in races if R['date'] // 100 >= a.start})
