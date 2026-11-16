@@ -1,6 +1,8 @@
 # 収集が抜けている過去の日（data/YYYY/races.csv のレース数が少ない日）を netkeirin から少しずつ補充し、
 # 抜けている日が無くなった後は、ワイドの倍率などが欠けた旧形式のレースの最終オッズを取り直す。
-# 非公開のデータ用リポジトリにだけコミットする。1回あたり約2〜2.5時間ぶん（新しい日を始めるのは開始から105分まで）。全部埋まったら何もせず終わる。
+# さらに、本紙の印・3連単ユーザー支持率・本紙の買い目が無いレース（2026/04/01 以降）の出走表ページを取り直す（marks.csv / honshi_picks.csv）。
+# 非公開のデータ用リポジトリにだけコミットする。全段階の合計は160分まで（新しい日を始めるのは開始から75分まで、
+# オッズの取り直しは最大50分、印の取り直しは最大60分）。timeout 175分に収まる。全部埋まったら何もせず終わる。
 #
 # 重要: netkeirin 利用規約により、データは私的利用の範囲内でのみ利用できる。
 #   * このリポジトリ（公開）には何もコミットしない。ログには件数・成功/失敗だけを出す。
@@ -61,7 +63,7 @@ jobs:
         if: steps.cfg.outputs.ok == 'true'
         env:
           DATE_FROM: ${{ inputs.date_from }}
-        run: python netkeirin_backfill.py --out-dir _data_repo/data --from "${DATE_FROM:-20260701}" --budget-min 105 --odds-from 20260401 --odds-budget-min 100
+        run: python netkeirin_backfill.py --out-dir _data_repo/data --from "${DATE_FROM:-20260701}" --budget-min 75 --odds-from 20260401 --odds-budget-min 50 --marks-from 20260401 --marks-budget-min 60 --total-budget-min 160
 
       - name: データ用リポジトリにコミット
         if: always() && steps.cfg.outputs.ok == 'true'

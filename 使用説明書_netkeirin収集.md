@@ -201,3 +201,20 @@ python tests/netkeirin_test.py   # 架空のHTMLでの単体テスト（通信�
 2. line_type は推定値（上記）。race_type は対応表（RACE_TYPE_MAP）に無い表記だと WINTICKET と異なる表記のまま残る。
 3. 天候・風速は取れない。
 4. サイト構造の変更で解析が失敗した場合、ログの「失敗」件数が増えます。その時は解析処理の修正が必要です。
+
+## 本紙の印・3連単ユーザー支持率・本紙の買い目（marks.csv / honshi_picks.csv）
+
+出走表ページに無料で載っている「netkeirin本紙」の予想だけを保存する。有料予想（ウマい車券）には触れない。
+見解の文章は著作物なので保存しない。
+
+| ファイル | 列 | 内容 |
+|---|---|---|
+| data/YYYY/marks.csv | race_id, car_number, hs_mark, sup1, sup2, sup3 | hs_mark: 本紙の印（1=◎ 2=○ 3=▲ 4=△ 5=☆ 100=無印、無ければ空欄）／ sup1〜3: 3連単ユーザー支持率の1着・2着・3着（%） |
+| data/YYYY/honshi_picks.csv | race_id, date, bet_type, combination, kind | 本紙の買い目を1点ずつに展開（順不同の券種は昇順）。kind は元の表記（例「フォーメーション:5→1→2,6,7」） |
+
+- 印の参照先は marks.csv に一本化している。`parse_racecard` の行には hs_mark・sup1〜3 が入るが、racecards.csv には書かない
+  （WINTICKET 由来の racecards.csv を書き換えないため）。
+- 毎日の収集（collect_date）で、その日のレースの marks.csv・honshi_picks.csv も書く。
+- 過去分は `netkeirin_backfill.py --marks-from 20260401 --marks-budget-min 60` で、marks.csv に無いレースの出走表ページを
+  1レース1リクエストで取り直す。取得に失敗したレースは data/netkeirin_backfill.json に記録し、繰り返さない。
+- 2026/04/01 の出走表ページにも印・支持率・買い目が載っていることを確認済み。支持率は締切時点の値（確定後のページで表示されるもの）。
