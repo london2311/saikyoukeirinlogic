@@ -173,6 +173,21 @@ odds は常に倍率、ワイドは odds=最低 / odds_max=最高、的中組は
 - ★ = 事前登録した買い方（strategies.json の alert）に該当。2車複・ワイド以外は過去の検証で負けていたため「参考」表示
 - パスワードを変えた場合は、次の時間帯の実行から新しいパスワードで読めるようになる（その日の分は作り直し）
 
+## 1点買いの記録と資金管理（期待値ボードの 🎯今の推奨・💰資金管理）
+
+- 一覧の一番上の **🎯 今の推奨（1点・100円）** に、全場の「これから締切」の推奨を締切の早い順に出す
+  （検証済みの券種のうち、確定予想の期待値が設定値（既定 1.10）以上・当たる確率 0.5% 以上・300倍以下）。各場の欄はこれまで通り
+- 実際に買ったら金額を確かめて **［賭けた］**。記録は非公開の `datebase` の `data/bets/bets_YYYYMM.json` に保存（端末をまたいで共有）。
+  間違えた時は **取消**（精算前のみ）
+- 毎朝の台帳ジョブ（netkeirin-ledger.yml）が `analysis/settle_bets.py` で精算し `data/bets/settled.json` を書く
+  （的中 = 払戻 × 金額 ÷ 100、レース中止・欠車を含む買い目は返還、結果が無いレースは保留）
+- **💰資金管理**: 残高・収支・回収率・的中・最大連敗・最大の下落幅・今日の成績・残高の推移・履歴。
+  設定（最初の資金・1点の金額・推奨にする期待値・1日の損失の上限・1レースの上限）は `data/bets/settings.json`。
+  上限を超える記録は確認を出す
+- 初回のみ（端末ごと）: GitHub → Settings → Developer settings → Personal access tokens → **Fine-grained tokens** で
+  「Only select repositories = datebase」「Contents: Read and write」だけのトークンを作り、💰資金管理 の画面に貼る。
+  トークンはサイトのパスワードで暗号化して端末にだけ保存する（チャットなどには貼らない）。有効期限が切れたら作り直して貼り直す
+
 ## 事前登録した買い方の成績台帳（analysis/snapshot_ledger.py / .github/workflows/netkeirin-ledger.yml）
 
 `analysis/strategies.json` に登録した買い方（全券種）を、発走前に記録したオッズ（締切2分前 C-2 が本番、締切10分前 C-10 は参考）で判定し、

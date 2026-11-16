@@ -52,6 +52,8 @@ jobs:
           python analysis/snapshot_ledger.py --data _data_repo/data
           # 締切前オッズ → 確定オッズの下がり方を学習（集計値だけを非公開リポジトリに保存。期待値ボードが使う）
           python analysis/odds_drift.py --data _data_repo/data --out _data_repo/data/ledger/drift.json
+          # 期待値ボードの［賭けた］記録を、確定した払戻で精算（data/bets/settled.json）
+          python analysis/settle_bets.py --data _data_repo/data
       - name: データ用リポジトリにコミット
         if: steps.cfg.outputs.ok == 'true'
         working-directory: _data_repo
@@ -59,6 +61,7 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add data/ledger
+          if [ -d data/bets ]; then git add data/bets; fi
           if git diff --cached --quiet; then echo "変更なし"; exit 0; fi
           git commit -q -m "ledger: 事前登録した買い方の成績 $(date -u -d '+9 hours' +%Y-%m-%d)"
           for i in 1 2 3 4; do git pull -q --rebase && git push -q && break; sleep $((i * 5)); done
