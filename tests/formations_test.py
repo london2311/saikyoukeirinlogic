@@ -57,6 +57,22 @@ def main():
     w = F.group_metrics('ワイド', ['1-2', '1-3'], probs, odds, dist)
     exact = sum(p for (a, b, c), p in dist.items() if ({1, 2} <= {a, b, c}) or ({1, 3} <= {a, b, c}))
     check(abs(w['p'] - exact) < 1e-12, 'ワイドの的中率は「どれか1点以上」（重なりを二重に数えない）')
+    cs = F.combine(gs, probs, odds, dist)
+    check(cs and all('＋' in c['label'] for c in cs), '違う形の買い目群の組み合わせ（例: A ＋ B）')
+    c = cs[0]
+    parts = c['label'].split(' ＋ ')
+    g1 = next(x for x in gs if x['label'] == parts[0] and x['type'] == c['type'])
+    g2 = next(x for x in gs if x['label'] == parts[1] and x['type'] == c['type'])
+    check(set(c['keys']) == set(g1['keys']) | set(g2['keys']) and c['p'] >= max(g1['p'], g2['p']) - 1e-12,
+          '組み合わせは重なる点を1つにまとめ、的中率は元より上がる')
+    lab = {(x['type'], x['label']): x for x in gs}
+    disjoint = []
+    for c2 in cs:
+        a, b = (lab.get((c2['type'], s)) for s in c2['label'].split(' ＋ '))
+        if c2['type'] != 'ワイド' and a and b and not set(a['keys']) & set(b['keys']):
+            disjoint.append((c2, a, b))
+    check(disjoint and all(min(a['ev'], b['ev']) - 1e-9 <= c2['ev'] <= max(a['ev'], b['ev']) + 1e-9 for c2, a, b in disjoint),
+          '重なりの無い組み合わせの期待値は、元の2つの間')
     print('\n全テスト成功')
 
 

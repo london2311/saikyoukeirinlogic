@@ -135,6 +135,17 @@ def build_groups(probs, odds, lines=None, dist3=None):
             for k in range(1, 5):
                 add('3連単', f'{a}{b}→{a}{b}→{"".join(map(str, rest[:k]))}',
                     [f'{x}-{y}-{c}' for x, y in ((a, b), (b, a)) for c in rest[:k]])
+        for a in cars:  # 1頭軸マルチ（軸が何着でもよい）: 相手2頭=6点、相手3頭=18点
+            part = sorted((x for x in cars if x != a), key=lambda x: -sum(p for k, p in p3.items() if str(a) in k.split('-') and str(x) in k.split('-')))
+            for k in (2, 3):
+                T = part[:k]
+                keys = [f'{x}-{y}-{z}' for b, c in combinations(T, 2) for x, y, z in permutations((a, b, c))]
+                add('3連単', f'{a}軸マルチ（相手{"".join(map(str, T))}）', keys)
+        for a, b in combinations(cars, 2):  # 2頭軸マルチ: 相手1頭=6点、2頭=12点、3頭=18点
+            rest = sorted((c for c in cars if c not in (a, b)), key=lambda c: -sum(p3k(*o) for o in permutations((a, b, c))))
+            for k in (1, 2, 3):
+                keys = [f'{x}-{y}-{z}' for c in rest[:k] for x, y, z in permutations((a, b, c))]
+                add('3連単', f'{a}{b}軸マルチ（相手{"".join(map(str, rest[:k]))}）', keys)
         for T in combinations(cars, 3):  # 3頭BOX
             add('3連単', f'{"".join(map(str, T))} BOX', [f'{x}-{y}-{z}' for x, y, z in permutations(T)])
     # ---- 3連複
@@ -169,6 +180,33 @@ def build_groups(probs, odds, lines=None, dist3=None):
             for k in (3, 4):
                 for T in combinations(cars, k):
                     add(bt, f'{"".join(map(str, T))} BOX', [_sorted_key(c) for c in combinations(T, 2)])
+    return out
+
+
+def combine(groups, probs, odds, dist3=None, top=20, p_seed=0.03):
+    """違う形の買い目群を2つ組み合わせた候補（例: 1→2→345 ＋ 4→5→136）。
+    券種ごとに期待値の高い群（的中率 p_seed 以上）上位 top 個から2つを選び、重なる点は1つにまとめて合成オッズで評価する。
+    組み合わせると的中率は上がり、期待値は元の2つの間になる（的中率を上げても期待値を保てる組を探すのに使う）"""
+    out = []
+    by_type = {}
+    for g in groups:
+        if g['p'] >= p_seed and '＋' not in g.get('label', ''):
+            by_type.setdefault(g['type'], []).append(g)
+    for bt, gs in by_type.items():
+        gs = sorted(gs, key=lambda g: (-g['ev'], g['n']))[:top]
+        seen = {frozenset(g['keys']) for g in gs}
+        for g1, g2 in combinations(gs, 2):
+            keys = list(dict.fromkeys(g1['keys'] + g2['keys']))
+            sig = frozenset(keys)
+            if len(keys) > MAX_POINTS[bt] or sig in seen or sig == frozenset(g1['keys']) or sig == frozenset(g2['keys']):
+                continue
+            if set(g1['keys']) <= set(g2['keys']) or set(g2['keys']) <= set(g1['keys']):
+                continue
+            seen.add(sig)
+            m = group_metrics(bt, keys, probs, odds, dist3)
+            if m:
+                m['label'] = f'{g1["label"]} ＋ {g2["label"]}'
+                out.append(m)
     return out
 
 
