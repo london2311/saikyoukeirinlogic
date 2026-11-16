@@ -12,6 +12,10 @@ netkeirin_backfill.py — 収集が抜けている過去の日を netkeirin か�
     （netkeirin 側にも少ししか無い日で、毎回取り直さないため）
   * 抜けている日が無くなったら、残り時間で「netkeirin の最終オッズが無いレース」（WINTICKET 由来の旧形式など。
     ワイドの倍率が欠けていて検証できない）のオッズだけを 1レース1リクエストで取り直す（--odds-from 以降の日）
+  * 「印だけ取り直す」段階（--marks-from / --marks-budget-min）: data/YYYY/marks.csv にまだ無いレースの出走表ページを
+    1レース1リクエストで取り、本紙の印・3連単ユーザー支持率（marks.csv）と本紙の買い目（honshi_picks.csv）を追記する。
+    racecards.csv（WINTICKET 由来を含む）は書き換えない。有料予想（ウマい車券）には触れない
+  * 全段階の合計時間は --total-budget-min 以内に収める
   * リクエスト間隔は netkeirin_collector.REQUEST_INTERVAL（3秒）のまま
 """
 import argparse
@@ -124,6 +128,76 @@ def refetch_odds(out_dir: Path, prog: dict, d_from: str, d_to: str, deadline: fl
     return days
 
 
+def races_with_marks(out_dir: Path) -> set:
+    """marks.csv に1行でもあるレースID（WINTICKET 形式）"""
+    have = set()
+    for p in sorted(out_dir.glob('*/marks.csv')):
+        with open(p, newline='', encoding='utf-8-sig') as f:
+            for row in csv.DictReader(f):
+                if row.get('race_id'):
+                    have.add(row['race_id'])
+    return have
+
+
+def marks_todo(out_dir: Path, prog: dict, d_from: str, d_to: str) -> list:
+    """印の取り直し対象: d_from〜d_to の（中止でない）レースのうち、marks.csv に無く、取得失敗の記録も無いもの"""
+    have = races_with_marks(out_dir)
+    failed = set(prog.get('_marks_failed', {}))
+    out = []
+    for p in sorted(out_dir.glob('*/races.csv')):
+        with open(p, newline='', encoding='utf-8-sig') as f:
+            for row in csv.DictReader(f):
+                d, rid = str(row.get('date', ''))[:8], row.get('race_id', '')
+                if not rid or not (d_from <= d <= d_to) or str(row.get('cancel', '0')) not in ('0', '', '0.0'):
+                    continue
+                if rid not in have and rid not in failed:
+                    out.append((d, rid))
+    return sorted(set(out))
+
+
+def refetch_marks(out_dir: Path, prog: dict, d_from: str, d_to: str, deadline: float) -> dict:
+    """本紙の印・支持率・買い目だけを取り直す（出走表ページ 1レース1リクエスト）"""
+    todo = marks_todo(out_dir, prog, d_from, d_to)
+    failed = prog.setdefault('_marks_failed', {})
+    st = dict(todo=len(todo), ok=0, failed=0, no_card=0)
+    cards, picks = [], []
+
+    def flush():
+        if cards or picks:
+            N.save_marks(out_dir, cards, picks)
+            cards.clear()
+            picks.clear()
+    try:
+        for i, (d, rid) in enumerate(todo):
+            if time.monotonic() >= deadline:
+                break
+            nk = to_nk(rid)
+            try:
+                html = N.fetch(f'{N.BASE_URL}/race/entry/', {'race_id': nk})
+                c = N.parse_racecard(html, nk)
+                html_picks = N.parse_honshi_picks(html, nk)
+            except N.Blocked:
+                raise
+            except (N.HTTPError, N.URLError, ValueError, AttributeError, IndexError) as e:
+                st['failed'] += 1
+                failed[rid] = type(e).__name__  # 同じレースを毎回取り直さない
+                continue
+            if not c:
+                st['no_card'] += 1
+                failed[rid] = 'no_card'
+                continue
+            cards.extend(c)
+            picks.extend(html_picks)
+            st['ok'] += 1
+            if len(cards) >= 500:
+                flush()
+    finally:
+        flush()
+    print(f"印の取り直し: 対象 {st['todo']} / 成功 {st['ok']} / 失敗 {st['failed']} / 出走表なし {st['no_card']} / "
+          f"残り {st['todo'] - st['ok'] - st['failed'] - st['no_card']}")
+    return st
+
+
 def todo_dates(per_day: Counter, prog: dict, d_from: str, d_to: str, min_races: int) -> list:
     d0 = datetime.strptime(d_from, '%Y%m%d')
     d1 = datetime.strptime(d_to, '%Y%m%d')
@@ -145,6 +219,9 @@ def main(argv=None):
     ap.add_argument('--budget-min', type=float, default=150, help='この分数を超えたら次の日に進まない')
     ap.add_argument('--odds-from', default='20260401', help='最終オッズを取り直す期間の開始日（抜けている日が無い時だけ）')
     ap.add_argument('--odds-budget-min', type=float, default=0, help='オッズの取り直しに使う時間の上限（0=しない）')
+    ap.add_argument('--marks-from', help='本紙の印・支持率・買い目を取り直す期間の開始日（指定時のみ）')
+    ap.add_argument('--marks-budget-min', type=float, default=0, help='印の取り直しに使う時間の上限（0=しない）')
+    ap.add_argument('--total-budget-min', type=float, default=160, help='全段階の合計時間の上限（分）')
     a = ap.parse_args(argv)
 
     out_dir = Path(a.out_dir)
@@ -173,10 +250,24 @@ def main(argv=None):
         sys.exit(2)
     left = len(dates) - done
     print(f'今回の補充: {done}日 / 残り {left}日')
+    def remaining(limit):  # 段階の上限と、合計の残り時間の小さい方（分）
+        return max(0.0, min(limit, a.total_budget_min - (time.monotonic() - t0) / 60))
+
     if left == 0 and a.odds_budget_min > 0:
-        deadline = time.monotonic() + max(0.0, min(a.odds_budget_min, a.budget_min + 30 - (time.monotonic() - t0) / 60)) * 60
+        reserve = a.marks_budget_min if a.marks_from else 0  # 印の段階の時間を残しておく
+        deadline = time.monotonic() + max(0.0, min(remaining(a.odds_budget_min),
+                                                   a.total_budget_min - reserve - (time.monotonic() - t0) / 60)) * 60
         try:
             refetch_odds(out_dir, prog, a.odds_from, d_to, deadline)
+        except N.Blocked as e:
+            print(f'!! サーバーから拒否されたため中断しました（回避はしません）: {e}')
+            save_progress(out_dir, prog)
+            sys.exit(2)
+        save_progress(out_dir, prog)
+    if a.marks_from and a.marks_budget_min > 0 and remaining(a.marks_budget_min) > 0:
+        deadline = time.monotonic() + remaining(a.marks_budget_min) * 60
+        try:
+            refetch_marks(out_dir, prog, a.marks_from, d_to, deadline)
         except N.Blocked as e:
             print(f'!! サーバーから拒否されたため中断しました（回避はしません）: {e}')
             save_progress(out_dir, prog)
