@@ -54,7 +54,8 @@ def buy_line(p, ev_min=1.10):
 
 
 class SiteBuilder:
-    def __init__(self, model, password, out_dir, date, cards_cache=None, cards_fn=None, push_fn=None, strategies=None):
+    def __init__(self, model, password, out_dir, date, cards_cache=None, cards_fn=None, push_fn=None, strategies=None, drift=None):
+        self.drift = drift or {}
         self.model = model
         self.out = Path(out_dir)
         self.date = date
@@ -137,10 +138,12 @@ class SiteBuilder:
         wt = KC_wt(nk)
         types = {}
         for t in res.get('tickets', []):
+            # 締切後の下落を見込んだ「確定時の予想オッズ」と、それで計算した期待値（下落の学習データが無ければ今のオッズと同じ）
+            of = round(t['odds'] * drift_ratio(self.drift, t['type'], snap, t['odds'], t['ev']), 1)
             types.setdefault(t['type'], []).append(
-                [t['key'], round(t['prob'], 5), t['odds'], round(t['ev'], 3), buy_line(t['prob'])])
+                [t['key'], round(t['prob'], 5), t['odds'], round(t['ev'], 3), buy_line(t['prob']), of, round(t['prob'] * of, 3)])
         for bt in types:
-            types[bt].sort(key=lambda x: -x[3])
+            types[bt].sort(key=lambda x: -x[6])
         hits = {}
         for bt, rows in (res.get('hit_picks') or {}).items():
             hits[bt] = [[h['key'], round(h['prob'], 4), h['odds']] for h in rows]
@@ -150,7 +153,7 @@ class SiteBuilder:
             for s in self.strategies:
                 for t in L.select(s, res['tickets']):
                     strat.append([s['id'], s['label'], t['type'], t['key'], t['odds'], round(t['ev'], 3), buy_line(t['prob'], s.get('min', 1.10))])
-        groups = self._groups(res, cards) if res.get('market_ok') else {}
+        groups = self._groups(res, cards, snap) if res.get('market_ok') else {}
         riders = []
         for r in sorted(cards, key=lambda x: int(x['car_number'])):
             if str(r.get('absent', 0)) in ('1', 'True', 'true'):
@@ -172,7 +175,7 @@ class SiteBuilder:
         for bt in TYPES:
             rows = [x for x in types.get(bt, []) if x[1] >= 0.005 and x[2] <= 300]
             if rows:
-                best.append([bt, rows[0][0], rows[0][2], rows[0][3]])
+                best.append([bt, rows[0][0], rows[0][2], rows[0][6], rows[0][5]])
         grp = sum(1 for bt, v in groups.items() for g in v.get('ev', []) if max(g[4], g[11] if len(g) > 11 else 0) >= 1.10)
         ent['best'] = dict(snap=snap, rows=best, strat=len(strat), grp=grp)
         self.index['updated'] = f'{now:%Y-%m-%d %H:%M:%S}'
@@ -195,13 +198,14 @@ class SiteBuilder:
             lines.setdefault(lid, []).append((pos, int(r['car_number'])))
         return [[c for _, c in sorted(v)] for v in lines.values()]
 
-    def _groups(self, res, cards):
+    def _groups(self, res, cards, snap=''):
         """券種ごとの買い目群（流し・フォーメーション・BOX・ライン決着）: 期待値重視（的中率10%以上）と的中率重視（30%以上）"""
         import formations as F
         probs, odds = {}, {}
         for t in res.get('tickets', []):
             probs.setdefault(t['type'], {})[t['key']] = t['prob']
-            odds.setdefault(t['type'], {})[t['key']] = t['odds']
+            # 確定時の予想オッズで評価する（締切後の下落を見込む。学習データが無ければ今のオッズ）
+            odds.setdefault(t['type'], {})[t['key']] = round(t['odds'] * drift_ratio(self.drift, t['type'], snap, t['odds'], t['ev']), 1)
         if '3連単' not in probs:
             return {}
         dist3 = {tuple(int(x) for x in k.split('-')): p for k, p in probs['3連単'].items()}
@@ -260,6 +264,16 @@ class SiteBuilder:
     def summary(self):
         s = self.stats
         return f'期待値ボード: 更新 {s["updates"]}件 / 公開 {s["pushes"]}回（失敗 {s["push_failed"]}）'
+
+
+def drift_ratio(table, bt, snap, odds, ev=None):
+    if not table:
+        return 1.0
+    import os
+    import sys
+    sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), 'analysis'))
+    import odds_drift as D
+    return D.ratio(table, bt, snap, odds, ev)
 
 
 def KC_wt(nk):

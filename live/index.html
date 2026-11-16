@@ -133,6 +133,9 @@ h2 { font-size: 15px; margin: 16px 0 6px; }
   const car = (n, big) => { const [bg, fg] = CAR[n] || ['#999', '#fff']; return `<span class="car${big ? ' big' : ''}" style="background:${bg};color:${fg}">${esc(n)}</span>`; };
   const combo = (bt, k, big) => { const sep = (bt === '2車単' || bt === '3連単') ? '→' : '='; return `<span class="combo">${String(k).split('-').map((n) => car(n, big)).join(`<span class="sep">${sep}</span>`)}</span>`; };
   const tbadge = (bt) => `<span class="tb" style="background:${TCOL[bt] || '#888'}">${esc(bt)}</span>`;
+  // 1点の行: [組, 確率, 今のオッズ, 今のEV, 買い基準, 確定予想オッズ, 確定予想EV]（古いデータは5要素）
+  const R = (x) => ({ k: x[0], p: x[1], od: x[2], ev0: x[3], line: x[4], of: x[5] ?? x[2], ev: x[6] ?? x[3] });
+  const oddsCell = (od, of) => (of != null && Math.abs(of - od) >= 0.05) ? `<b>${x1(od)}</b><span class="muted">→${x1(of)}</span>倍` : `<b>${x1(od)}</b>倍`;
   const tier = (ev) => ev >= 1.3 ? 's' : ev >= 1.1 ? 'a' : ev >= 1.0 ? 'b' : 'c';
   const TIER_LABEL = { s: '◎強く推奨', a: '○推奨', b: '△注目', c: '' };
   const evb = (ev) => { const t = tier(ev); return `<span class="evb ${t}">${TIER_LABEL[t] ? TIER_LABEL[t] + ' ' : ''}EV ${ev.toFixed(2)}</span>`; };
@@ -232,8 +235,8 @@ h2 { font-size: 15px; margin: 16px 0 6px; }
     const hot = n ? (top >= 1.3 ? 'gold' : 'hot') : '';
     const badge = !r.best ? '' : (n ? `<span class="pill good">🔥 おすすめあり</span>` : '<span class="pill off">見送り</span>');
     const shownBest = r.best ? r.best.rows.filter(([bt, k, od, ev]) => VALIDATED.has(bt) && ev >= st.evMin) : [];
-    const best = r.best ? (!shownBest.length ? `<div class="muted" style="margin-top:4px">期待値${st.evMin}以上の組はありません（${SNAP_LABEL[r.best.snap] || ''}時点）</div>` : `<div class="mini">${shownBest.map(([bt, k, od, ev]) =>
-      `${tbadge(bt)} ${combo(bt, k)} <span class="muted">${x1(od)}倍</span> ${evb(ev)}`).join('<span style="width:100%"></span>')}</div>
+    const best = r.best ? (!shownBest.length ? `<div class="muted" style="margin-top:4px">期待値${st.evMin}以上の組はありません（${SNAP_LABEL[r.best.snap] || ''}時点）</div>` : `<div class="mini">${shownBest.map(([bt, k, od, ev, of]) =>
+      `${tbadge(bt)} ${combo(bt, k)} <span class="muted">${oddsCell(od, of)}</span> ${evb(ev)}`).join('<span style="width:100%"></span>')}</div>
       <div class="muted" style="margin-top:4px">${SNAP_LABEL[r.best.snap] || ''}時点・2車複/ワイドで期待値が最も高い組</div>`) : '<div class="muted" style="margin-top:4px">まだ記録がありません</div>';
     return `<div class="card race ${hot}" data-id="${esc(r.id)}"><div class="top"><span class="ttl">${r.rn}R <span class="muted" style="font-weight:normal">締切 ${esc(r.deadline || '-')}・発走 ${esc(r.start)}</span></span>
       <span class="${cls}">${when}</span></div><div style="margin-top:6px">${badge}${snaps}</div>${best}</div>`;
@@ -266,7 +269,7 @@ h2 { font-size: 15px; margin: 16px 0 6px; }
       ${win}
       <div class="seg" id="view"><button data-v="single" class="${view === 'single' ? 'on' : ''}">1点ごと</button>
       <button data-v="group" class="${view === 'group' ? 'on' : ''}">買い目群（合成オッズ）</button></div>${evControl()}</div>${strat}${tables}
-      <p class="note">EV＝当たる確率×今のオッズ（ワイドは最低倍率）。「買い基準」＝EVが1.10になる倍率。表示は「表示する期待値」以上・確率0.5%以上・300倍以下（「全○組を表示」で全部）。</p></main>`;
+      <p class="note">EV＝当たる確率×確定予想オッズ（締切後の下落を過去の記録から見込んだ倍率。「今→確定予想」で表示。学習前は今のオッズ）。ワイドは最低倍率。「買い基準」＝EVが1.10になる倍率。表示は「表示する期待値」以上・確率0.5%以上・300倍以下（「全○組を表示」で全部）。</p></main>`;
     bindBack();
     app.querySelectorAll('.seg button[data-s]').forEach((b) => b.onclick = () => { st.snap = b.dataset.s; render(); });
     bindEv();
@@ -277,11 +280,15 @@ h2 { font-size: 15px; margin: 16px 0 6px; }
   function hero(s) {
     const recs = [];
     const seen = new Set();
-    const pOf = (bt, k) => { const x = (s.types[bt] || []).find((r) => r[0] === k); return x ? x[1] : null; };
-    (s.strat || []).forEach(([id, lab, bt, k, od, ev, line]) => { seen.add(bt + k); recs.push({ kind: '★ 事前登録', bt, keys: [k], od, ev, line, P: pOf(bt, k), lab }); });
+    const rowOf = (bt, k) => { const x = (s.types[bt] || []).find((r) => r[0] === k); return x ? R(x) : null; };
+    (s.strat || []).forEach(([id, lab, bt, k, od, ev, line]) => {
+      seen.add(bt + k);
+      const r = rowOf(bt, k);  // 表示は確定予想オッズでの期待値（判定は事前登録どおり今のオッズ）
+      recs.push({ kind: '★ 事前登録', bt, keys: [k], od, of: r ? r.of : od, ev: r ? r.ev : ev, line, P: r ? r.p : null, lab });
+    });
     for (const bt of VALIDATED) {
-      (s.types[bt] || []).filter(([k, p, od, ev]) => ev >= 1.1 && p >= 0.005 && od <= 300 && !seen.has(bt + k)).slice(0, 3)
-        .forEach(([k, p, od, ev, line]) => recs.push({ kind: '1点', bt, keys: [k], od, ev, line, P: p }));
+      (s.types[bt] || []).map(R).filter(({ k, p, od, ev }) => ev >= 1.1 && p >= 0.005 && od <= 300 && !seen.has(bt + k)).slice(0, 3)
+        .forEach(({ k, p, od, ev, line, of }) => recs.push({ kind: '1点', bt, keys: [k], od, of, ev, line, P: p }));
       const g = (s.groups || {})[bt];
       if (g) {
         [...(g.ev || []), ...(g.hit || [])].forEach((r) => {
@@ -297,7 +304,7 @@ h2 { font-size: 15px; margin: 16px 0 6px; }
     recs.sort((a, b) => b.ev - a.ev).forEach((r) => { const k = r.bt + r.keys.slice().sort().join(','); if (!sig.has(k)) { sig.add(k); uniq.push(r); } });
     if (!uniq.length) {
       const near = [];
-      for (const bt of VALIDATED) (s.types[bt] || []).filter(([k, p, od]) => p >= 0.03 && od <= 300).slice(0, 2).forEach((x) => near.push([bt, ...x]));
+      for (const bt of VALIDATED) (s.types[bt] || []).filter(([k, p, od]) => p >= 0.03 && od <= 300).slice(0, 2).forEach((x) => { const r = R(x); near.push([bt, r.k, r.p, r.od, r.ev, r.line]); });
       near.sort((a, b) => b[4] - a[4]);
       return `<div class="card skip"><div class="th2">⏸ 今は見送り <span class="muted" style="font-weight:normal">2車複・ワイドで期待値1.10以上の買い目がありません</span></div>
         ${near.slice(0, 3).map(([bt, k, p, od, ev, line]) => `<div class="mini">${tbadge(bt)} ${combo(bt, k)} <span class="muted">今 ${x1(od)}倍 → <b>${x1(line)}倍以上</b>なら買い</span> ${evb(ev)}</div>`).join('')}</div>`;
@@ -306,7 +313,7 @@ h2 { font-size: 15px; margin: 16px 0 6px; }
       ${uniq.slice(0, 6).map((r) => { const t = tier(r.ev); return `<div class="rec ${t}">
         <div>${tbadge(r.bt)} <span class="pill ${r.kind.startsWith('★') ? 'good' : ''}">${esc(r.kind)}</span>
           <div style="margin-top:6px" class="combos">${r.group ? r.keys.slice(0, 8).map((k) => combo(r.bt, k)).join('') + (r.keys.length > 8 ? ` <span class="muted">ほか${r.keys.length - 8}点</span>` : '') : combo(r.bt, r.keys[0], true)}</div></div>
-        <div style="text-align:right">${evb(r.ev)}<div class="buy">${r.group ? '合成 ' + x1(r.od) + '倍' : '今 ' + x1(r.od) + '倍'}</div></div>
+        <div style="text-align:right">${evb(r.ev)}<div class="buy">${r.group ? '合成 ' + x1(r.od) + '倍' : '今 ' + x1(r.od) + '倍'}</div>${!r.group && r.of != null && Math.abs(r.of - r.od) >= 0.05 ? `<div class="muted">確定予想 ${x1(r.of)}倍</div>` : ''}</div>
         <div class="line2">${r.group ? `${r.keys.length}点・的中 ${pct(r.P)}・${esc(r.lab)}` : `当たる確率 ${r.P != null ? pct(r.P) : '-'}・<b>${x1(r.line)}倍以上なら買い</b>${r.lab ? '・' + esc(r.lab) : ''}`}</div>
       </div>`; }).join('')}
       <div class="muted">1点100円など少額・一定額で。締切直前にもう一度倍率を確認し、基準を下回ったら見送り。</div></div>`;
@@ -314,13 +321,13 @@ h2 { font-size: 15px; margin: 16px 0 6px; }
   function typeTable(bt, rows) {
     if (!rows.length) return `<div class="card"><div class="th2" style="margin:0">${tbadge(bt)} <span class="muted" style="font-weight:normal">この時点のオッズがありません</span></div></div>`;
     const all = !!st.showAll[bt];
-    const shown = all ? rows : rows.filter((x) => x[1] >= 0.005 && x[2] <= 300 && x[3] >= st.evMin).slice(0, 15);
+    const shown = (all ? rows : rows.filter((x) => x[1] >= 0.005 && x[2] <= 300 && R(x).ev >= st.evMin).slice(0, 15)).map(R);
     const tag = VALIDATED.has(bt) ? '<span class="pill good">検証済み</span>' : '<span class="pill warn">参考</span>';
     return `<div class="card" style="border-top:4px solid ${TCOL[bt]}"><div class="th2">${tbadge(bt)} ${tag}<span class="muted" style="font-weight:normal">期待値の高い順</span></div>
-      <div class="scroll"><table><tr><th>組</th><th>確率</th><th>今</th><th>買い基準</th><th>EV</th></tr>
+      <div class="scroll"><table><tr><th>組</th><th>確率</th><th>今→確定予想</th><th>買い基準</th><th>EV</th></tr>
       ${shown.length ? '' : `<tr><td colspan="5" class="muted">期待値${st.evMin}以上の組はありません</td></tr>`}
-      ${shown.map(([k, p, od, ev, line]) => `<tr class="${VALIDATED.has(bt) && ev >= 1.1 && p >= 0.005 && od <= 300 ? 'buy' + (ev >= 1.3 ? ' s' : '') : ''}">
-        <td>${combo(bt, k)}</td><td>${pct(p)}</td><td><b>${x1(od)}</b>倍</td><td>${x1(line)}倍</td>
+      ${shown.map(({ k, p, od, ev, line, of }) => `<tr class="${VALIDATED.has(bt) && ev >= 1.1 && p >= 0.005 && od <= 300 ? 'buy' + (ev >= 1.3 ? ' s' : '') : ''}">
+        <td>${combo(bt, k)}</td><td>${pct(p)}</td><td>${oddsCell(od, of)}</td><td>${x1(line)}倍</td>
         <td>${evb(ev).replace(/◎強く推奨 |○推奨 |△注目 /, '')}</td></tr>`).join('')}</table></div>
       <button class="more" data-t="${esc(bt)}">${all ? '上位だけ表示' : `全${rows.length}組を表示`}</button></div>`;
   }

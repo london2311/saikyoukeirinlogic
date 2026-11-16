@@ -127,9 +127,15 @@ def make_site(a, date, alerter):
     if fetch_cards is None:
         import netkeirin_alert as NA
         fetch_cards = NA.Alerter._fetch_cards
-    print('期待値ボード: 作成します')
+    drift = {}
+    if a.drift and os.path.exists(a.drift):
+        try:
+            drift = json.load(open(a.drift, encoding='utf-8')).get('table', {})
+        except ValueError:
+            drift = {}
+    print(f'期待値ボード: 作成します（締切後の下落の学習: {"あり" if drift else "なし"}）')
     return S.SiteBuilder(model, pw, a.site_dir, date, cards_cache=cache, cards_fn=fetch_cards, push_fn=S.git_push_fn(),
-                         strategies=strategies)
+                         strategies=strategies, drift=drift)
 
 
 def main(argv=None, clock=None, sleep=time.sleep):
@@ -145,6 +151,7 @@ def main(argv=None, clock=None, sleep=time.sleep):
     ap.add_argument('--alert-max', type=int, default=60, help='1日に送るメールの上限')
     ap.add_argument('--site', action='store_true', help='期待値ボード（暗号化）のデータを作って site-data ブランチに置く（netkeirin_site.py）')
     ap.add_argument('--site-dir', default='_site_out', help='期待値ボードのデータの作業フォルダ（公開側には入れない）')
+    ap.add_argument('--drift', default='', help='締切後のオッズ下落の学習結果（analysis/odds_drift.py の出力 JSON）')
     a = ap.parse_args(argv)
     clock = clock or (lambda: datetime.now(N.JST))
 
