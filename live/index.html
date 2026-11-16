@@ -7,55 +7,95 @@
 <title>期待値ボード</title>
 <style>
 :root {
-  --bg: #f6f7f9; --card: #ffffff; --ink: #1d2433; --sub: #5b6476; --line: #e2e5eb;
-  --accent: #2456d6; --accent-soft: #e8eefc; --good: #0f7b4a; --good-soft: #e3f4ec; --warn: #9a5b00; --warn-soft: #fff3df;
-  --bad: #b42318;
+  --bg: #f3f5fa; --card: #ffffff; --ink: #172033; --sub: #5d6680; --line: #e3e7ef;
+  --accent: #2f5bea; --accent-soft: #eaf0ff; --good: #0e8a4f; --good-soft: #e2f6ec; --warn: #a15c00; --warn-soft: #fff3dc;
+  --bad: #c2272d; --gold1: #ffd76a; --gold2: #ff9f43;
+  --t-q: #1f6feb; --t-w: #12a150; --t-f: #8b5cf6; --t-e: #f08c00; --t-t: #e5484d;
 }
 @media (prefers-color-scheme: dark) {
-  :root { --bg: #11141a; --card: #1a1f28; --ink: #e8ebf1; --sub: #9aa3b5; --line: #2a313d;
-    --accent: #7aa2ff; --accent-soft: #1f2a44; --good: #4cc38a; --good-soft: #15302a; --warn: #f0b354; --warn-soft: #33270f; --bad: #ff7b72; }
+  .car { border-color: rgba(255,255,255,.45); }
+  :root { --bg: #0f131b; --card: #19202c; --ink: #e9edf5; --sub: #9aa4ba; --line: #2b3342;
+    --accent: #7c9cff; --accent-soft: #1d2847; --good: #44c98a; --good-soft: #12302a; --warn: #f2b24c; --warn-soft: #33270f; --bad: #ff7b72; }
 }
 * { box-sizing: border-box; }
 body { margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Noto Sans JP", sans-serif; }
-header { position: sticky; top: 0; z-index: 5; background: var(--card); border-bottom: 1px solid var(--line); padding: 10px 16px; }
-header h1 { font-size: 17px; margin: 0; display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
-header .upd { font-size: 12px; color: var(--sub); font-weight: normal; }
+header { position: sticky; top: 0; z-index: 5; background: linear-gradient(120deg, #2f5bea, #7b4fc4); color: #fff; padding: 10px 16px 8px; box-shadow: 0 2px 10px rgba(0,0,0,.15); }
+header h1 { font-size: 18px; margin: 0; display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+header .upd { font-size: 12px; opacity: .85; font-weight: normal; }
 main { max-width: 860px; margin: 0 auto; padding: 12px 16px 60px; }
 .tabs { display: flex; gap: 6px; overflow-x: auto; padding: 8px 0 2px; scrollbar-width: none; }
-.tab { flex: none; border: 1px solid var(--line); background: var(--card); color: var(--ink); border-radius: 999px; padding: 5px 12px; font-size: 14px; cursor: pointer; }
-.tab.on { background: var(--accent); border-color: var(--accent); color: #fff; }
-.card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 12px; margin: 10px 0; }
-.race { cursor: pointer; }
-.race .top { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
-.race .ttl { font-weight: 700; font-size: 16px; }
+.tab { flex: none; border: 1px solid rgba(255,255,255,.5); background: rgba(255,255,255,.12); color: #fff; border-radius: 999px; padding: 5px 14px; font-size: 14px; cursor: pointer; }
+.tab.on { background: #fff; color: #2f5bea; font-weight: 700; }
+.tab .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: #3ddc84; margin-left: 5px; vertical-align: middle; }
+.card { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 12px; margin: 10px 0; }
+.race { cursor: pointer; border-left: 6px solid var(--line); }
+.race.hot { border-left-color: #12a150; box-shadow: 0 2px 12px rgba(18,161,80,.15); }
+.race.gold { border-left-color: #ff9f43; box-shadow: 0 2px 14px rgba(255,159,67,.25); }
+.race .top { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.ttl { font-weight: 800; font-size: 17px; }
 .muted { color: var(--sub); font-size: 13px; }
-.pill { display: inline-block; font-size: 12px; padding: 1px 8px; border-radius: 999px; background: var(--accent-soft); color: var(--accent); margin-right: 4px; }
-.pill.good { background: var(--good-soft); color: var(--good); }
+.pill { display: inline-block; font-size: 12px; padding: 1px 9px; border-radius: 999px; background: var(--accent-soft); color: var(--accent); margin: 2px 4px 2px 0; }
+.pill.good { background: var(--good-soft); color: var(--good); font-weight: 700; }
 .pill.warn { background: var(--warn-soft); color: var(--warn); }
 .pill.off { background: transparent; color: var(--sub); border: 1px dashed var(--line); }
-.best { margin-top: 6px; font-size: 13px; display: grid; grid-template-columns: auto 1fr auto auto; gap: 2px 10px; }
-.best .ev { text-align: right; font-variant-numeric: tabular-nums; }
+.pill.done { background: #2f5bea; color: #fff; }
+.count { font-size: 12px; font-weight: 700; padding: 2px 9px; border-radius: 999px; background: var(--accent-soft); color: var(--accent); white-space: nowrap; }
+.count.soon { background: #ffe1e1; color: #c2272d; }
+.count.past { background: transparent; color: var(--sub); }
+.car { display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; border-radius: 50%; font-weight: 800; font-size: 13px;
+  border: 1.5px solid rgba(0,0,0,.25); font-variant-numeric: tabular-nums; flex: none; }
+.car.big { width: 32px; height: 32px; font-size: 16px; }
+td .car { width: 21px; height: 21px; font-size: 12px; }
+td .combo { gap: 1px; }
+td .evb { padding: 2px 6px; }
+th, td { padding-left: 3px; padding-right: 3px; }
+.combo { display: inline-flex; align-items: center; gap: 3px; flex-wrap: nowrap; white-space: nowrap; }
+.combos { display: flex; flex-wrap: wrap; gap: 4px 6px; align-items: center; }
+.combos .combo { padding: 2px 5px; border: 1px solid var(--line); border-radius: 999px; background: var(--bg); }
+.combo .sep { color: var(--sub); font-weight: 700; font-size: 12px; }
+.tb { display: inline-block; font-size: 12px; font-weight: 800; color: #fff; padding: 1px 8px; border-radius: 6px; white-space: nowrap; }
+.evb { display: inline-block; font-size: 12px; font-weight: 800; padding: 2px 8px; border-radius: 999px; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.evb.s { background: linear-gradient(90deg, var(--gold1), var(--gold2)); color: #4a2500; }
+.evb.a { background: #12a150; color: #fff; }
+.evb.b { background: #ffe58a; color: #5a4300; }
+.evb.c { background: var(--line); color: var(--sub); }
+.rec { display: grid; grid-template-columns: 1fr auto; gap: 4px 10px; align-items: center; padding: 12px; border-radius: 14px; margin: 8px 0;
+  background: var(--card); border: 2px solid #12a150; }
+.rec.s { border-color: #ff9f43; background: linear-gradient(135deg, rgba(255,215,106,.25), rgba(255,159,67,.12)), var(--card); }
+.rec .line2 { grid-column: 1 / -1; font-size: 13px; color: var(--sub); }
+.rec .buy { font-size: 15px; font-weight: 800; color: var(--good); }
+.rec.s .buy { color: #c05600; }
+.hero h2 { margin: 0 0 4px; font-size: 17px; }
+.skip { padding: 14px; border-radius: 14px; background: repeating-linear-gradient(135deg, var(--card), var(--card) 10px, var(--bg) 10px, var(--bg) 20px); border: 1px dashed var(--sub); }
+.mini { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: 6px; font-size: 13px; }
 .seg { display: flex; gap: 6px; margin: 8px 0; flex-wrap: wrap; }
-.seg button { border: 1px solid var(--line); background: var(--card); color: var(--ink); border-radius: 8px; padding: 6px 12px; cursor: pointer; font-size: 14px; }
-.seg button.on { border-color: var(--accent); color: var(--accent); background: var(--accent-soft); font-weight: 700; }
-.seg button:disabled { opacity: .4; cursor: default; }
+.seg button { border: 1px solid var(--line); background: var(--card); color: var(--ink); border-radius: 10px; padding: 6px 12px; cursor: pointer; font-size: 14px; }
+.seg button.on { border-color: #2f5bea; color: #fff; background: #2f5bea; font-weight: 700; }
+.seg button:disabled { opacity: .35; cursor: default; }
 table { width: 100%; border-collapse: collapse; font-size: 14px; font-variant-numeric: tabular-nums; }
-th, td { padding: 6px 4px; border-bottom: 1px solid var(--line); text-align: right; white-space: nowrap; }
+th, td { padding: 6px 4px; border-bottom: 1px solid var(--line); text-align: right; white-space: nowrap; vertical-align: middle; }
 th:first-child, td:first-child { text-align: left; white-space: normal; }
 th { color: var(--sub); font-weight: 600; font-size: 12px; }
 tr.buy td { background: var(--good-soft); }
-.ev-hi { color: var(--good); font-weight: 700; }
-.ev-lo { color: var(--sub); }
+tr.buy.s td { background: rgba(255,215,106,.28); }
 h2 { font-size: 15px; margin: 16px 0 6px; }
-.back { border: none; background: none; color: var(--accent); font-size: 15px; padding: 0; cursor: pointer; }
+.th2 { display: flex; align-items: center; gap: 6px; margin: 0 0 6px; font-size: 15px; }
+.back { border: none; background: none; color: #fff; font-size: 15px; padding: 0; cursor: pointer; font-weight: 700; }
 .login { max-width: 360px; margin: 18vh auto 0; }
 .login input[type=password] { width: 100%; font-size: 16px; padding: 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--card); color: var(--ink); }
-.login button { margin-top: 10px; width: 100%; font-size: 16px; padding: 10px; border: none; border-radius: 8px; background: var(--accent); color: #fff; cursor: pointer; }
+.login button { margin-top: 10px; width: 100%; font-size: 16px; padding: 10px; border: none; border-radius: 8px; background: linear-gradient(120deg, #2f5bea, #7b4fc4); color: #fff; cursor: pointer; font-weight: 700; }
 .err { color: var(--bad); font-size: 13px; margin-top: 8px; min-height: 1em; }
 .note { font-size: 12px; color: var(--sub); margin-top: 14px; }
-.riders { font-size: 13px; color: var(--sub); }
+.riders { display: flex; flex-wrap: wrap; gap: 6px 10px; font-size: 13px; color: var(--sub); margin-top: 6px; }
+.riders span { display: inline-flex; align-items: center; gap: 4px; }
+.winbar { display: flex; height: 10px; border-radius: 6px; overflow: hidden; margin-top: 8px; }
 .more { margin-top: 6px; border: none; background: none; color: var(--accent); cursor: pointer; padding: 0; font-size: 14px; }
 .scroll { overflow-x: auto; }
+.grp { margin: 6px 0; padding: 10px; border-radius: 12px; border: 1px solid var(--line); background: var(--card); }
+.grp.a { border: 2px solid #12a150; }
+.grp.s { border: 2px solid #ff9f43; background: linear-gradient(135deg, rgba(255,215,106,.2), transparent), var(--card); }
+.cut { margin-top: 6px; padding: 6px 8px; border-left: 4px solid #12a150; background: var(--good-soft); border-radius: 8px; font-size: 14px; }
+.legend { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; font-size: 12px; color: var(--sub); }
 </style>
 </head>
 <body>
@@ -85,6 +125,16 @@ h2 { font-size: 15px; margin: 16px 0 6px; }
   const pct = (p) => (p * 100).toFixed(p < 0.1 ? 1 : 0) + '%';
   const x1 = (v) => (v == null ? '-' : Number(v).toFixed(1));
   const fmtKey = (bt, k) => (bt === '2車単' || bt === '3連単') ? k.replace(/-/g, '→') : k.replace(/-/g, '=');
+  // 車番の色（競輪の枠の色）と券種の色
+  const CAR = { 1: ['#ffffff', '#1d1d1d'], 2: ['#1f1f1f', '#ffffff'], 3: ['#e0262b', '#ffffff'], 4: ['#1f5fd1', '#ffffff'], 5: ['#f7c600', '#1d1d1d'],
+    6: ['#1a9a48', '#ffffff'], 7: ['#f07800', '#ffffff'], 8: ['#f58cb4', '#1d1d1d'], 9: ['#7b4fc4', '#ffffff'] };
+  const TCOL = { '2車複': 'var(--t-q)', 'ワイド': 'var(--t-w)', '3連複': 'var(--t-f)', '2車単': 'var(--t-e)', '3連単': 'var(--t-t)' };
+  const car = (n, big) => { const [bg, fg] = CAR[n] || ['#999', '#fff']; return `<span class="car${big ? ' big' : ''}" style="background:${bg};color:${fg}">${esc(n)}</span>`; };
+  const combo = (bt, k, big) => { const sep = (bt === '2車単' || bt === '3連単') ? '→' : '='; return `<span class="combo">${String(k).split('-').map((n) => car(n, big)).join(`<span class="sep">${sep}</span>`)}</span>`; };
+  const tbadge = (bt) => `<span class="tb" style="background:${TCOL[bt] || '#888'}">${esc(bt)}</span>`;
+  const tier = (ev) => ev >= 1.3 ? 's' : ev >= 1.1 ? 'a' : ev >= 1.0 ? 'b' : 'c';
+  const TIER_LABEL = { s: '◎強く推奨', a: '○推奨', b: '△注目', c: '' };
+  const evb = (ev) => { const t = tier(ev); return `<span class="evb ${t}">${TIER_LABEL[t] ? TIER_LABEL[t] + ' ' : ''}EV ${ev.toFixed(2)}</span>`; };
 
   async function deriveKey(pw, meta) {
     const base = await crypto.subtle.importKey('raw', new TextEncoder().encode(pw), 'PBKDF2', false, ['deriveKey']);
@@ -157,24 +207,33 @@ h2 { font-size: 15px; margin: 16px 0 6px; }
     }
     const list = races.filter((r) => r.venue === st.venue).sort((a, b) => a.rn - b.rn);
     app.innerHTML = `<header><h1>期待値ボード <span class="upd">${esc(st.index.date)} 更新 ${esc((st.index.updated || '').slice(11, 16))}</span></h1>
-      <div class="tabs">${venues.map((v) => `<button class="tab ${v === st.venue ? 'on' : ''}" data-v="${esc(v)}">${esc(v)}</button>`).join('')}</div></header>
+      <div class="tabs">${venues.map((v) => `<button class="tab ${v === st.venue ? 'on' : ''}" data-v="${esc(v)}">${esc(v)}${races.some((r) => r.venue === v && recCount(r) && (minutesTo(r.deadline || r.start) ?? -1) > 0) ? '<span class="dot"></span>' : ''}</button>`).join('')}</div></header>
       <main>${list.map(raceCard).join('') || '<p class="muted">この場のレースはまだありません。</p>'}
-      <p class="note">締切は発走の5分前です。締切2分前のオッズが最後の判断材料です。★＝事前登録した買い方（2車複・ワイド）に該当。
-      期待値（EV）＝当たる確率×今のオッズ。1.10以上が買いの目安。2車複・ワイド以外は過去の検証で負けていたため参考表示です。</p></main>`;
+      <div class="card legend">${evb(1.35)}${evb(1.15)}${evb(1.03)}<span>EV＝当たる確率×今のオッズ。1.10以上が買いの目安</span></div>
+      <p class="note">締切は発走の5分前です。締切2分前のオッズが最後の判断材料です。🔥＝2車複・ワイドで期待値1.10以上（事前登録の★・買い目群を含む）。
+      2車複・ワイド以外は過去の検証で負けていたため参考表示です。緑の点が付いた場は、これから締切のおすすめがあります。</p></main>`;
     app.querySelectorAll('.tab').forEach((b) => b.onclick = () => { st.venue = b.dataset.v; render(); });
     app.querySelectorAll('.race').forEach((c) => c.onclick = () => openRace(c.dataset.id));
   }
+  function recCount(r) {
+    if (!r.best) return 0;
+    const singles = (r.best.rows || []).filter(([bt, k, od, ev]) => VALIDATED.has(bt) && ev >= 1.1).length;
+    return (r.best.strat || 0) + (r.best.grp || 0) + singles;
+  }
   function raceCard(r) {
     const m = minutesTo(r.deadline || r.start);
-    const when = m == null ? '' : (m > 0 ? `締切まであと${m}分` : (minutesTo(r.start) > 0 ? '締切済み' : '発走済み'));
-    const snaps = SNAPS.map((s) => `<span class="pill ${(r.snaps || []).includes(s) ? '' : 'off'}">${SNAP_LABEL[s]}</span>`).join('');
-    const strat = (r.best && r.best.strat ? `<span class="pill good">★ ${r.best.strat}点</span>` : '') +
-      (r.best && r.best.grp ? `<span class="pill">買い目群 EV1.1↑ ${r.best.grp}</span>` : '');
-    const best = r.best ? `<div class="best">${r.best.rows.map(([bt, k, od, ev]) =>
-      `<span class="muted">${esc(bt)}</span><span>${esc(fmtKey(bt, k))}</span><span class="muted">${x1(od)}倍</span><span class="ev ${ev >= 1.1 ? 'ev-hi' : 'ev-lo'}">EV ${ev.toFixed(2)}</span>`).join('')}</div>
-      <div class="muted" style="margin-top:4px">${SNAP_LABEL[r.best.snap] || ''}時点の、各券種で期待値が最も高い組</div>` : '<div class="muted">まだ記録がありません</div>';
-    return `<div class="card race" data-id="${esc(r.id)}"><div class="top"><span class="ttl">${r.rn}R <span class="muted">締切 ${esc(r.deadline || '-')}・発走 ${esc(r.start)}</span></span>
-      <span class="muted">${when}</span></div><div style="margin-top:4px">${snaps}${strat}</div>${best}</div>`;
+    const cls = m == null ? 'count past' : (m > 5 ? 'count' : (m > 0 ? 'count soon' : 'count past'));
+    const when = m == null ? '' : (m > 0 ? `締切まで ${m}分` : (minutesTo(r.start) > 0 ? '締切済み' : '発走済み'));
+    const snaps = SNAPS.map((s) => `<span class="pill ${(r.snaps || []).includes(s) ? 'done' : 'off'}">${SNAP_LABEL[s].replace('締切', '')}</span>`).join('');
+    const n = recCount(r);
+    const top = r.best ? Math.max(...(r.best.rows || []).filter(([bt]) => VALIDATED.has(bt)).map((x) => x[3]), 0) : 0;
+    const hot = n ? (top >= 1.3 ? 'gold' : 'hot') : '';
+    const badge = !r.best ? '' : (n ? `<span class="pill good">🔥 おすすめあり</span>` : '<span class="pill off">見送り</span>');
+    const best = r.best ? `<div class="mini">${r.best.rows.filter(([bt]) => VALIDATED.has(bt)).map(([bt, k, od, ev]) =>
+      `${tbadge(bt)} ${combo(bt, k)} <span class="muted">${x1(od)}倍</span> ${evb(ev)}`).join('<span style="width:100%"></span>')}</div>
+      <div class="muted" style="margin-top:4px">${SNAP_LABEL[r.best.snap] || ''}時点・2車複/ワイドで期待値が最も高い組</div>` : '<div class="muted" style="margin-top:4px">まだ記録がありません</div>';
+    return `<div class="card race ${hot}" data-id="${esc(r.id)}"><div class="top"><span class="ttl">${r.rn}R <span class="muted" style="font-weight:normal">締切 ${esc(r.deadline || '-')}・発走 ${esc(r.start)}</span></span>
+      <span class="${cls}">${when}</span></div><div style="margin-top:6px">${badge}${snaps}</div>${best}</div>`;
   }
 
   // ---- レース詳細
@@ -190,19 +249,18 @@ h2 { font-size: 15px; margin: 16px 0 6px; }
     const have = SNAPS.filter((s) => d.snaps[s]);
     if (!st.snap || !d.snaps[st.snap]) st.snap = have[have.length - 1];
     const s = d.snaps[st.snap];
-    const riders = (d.riders || []).map(([c, n, p, pt, sty]) => `${c} ${esc(n)}（${esc(p)}・${esc(pt)}・${esc(sty)}）`).join(' / ');
-    const win = Object.entries(s.win || {}).sort((a, b) => b[1] - a[1]).map(([c, p]) => `${c}番 ${pct(p)}`).join(' / ');
-    const strat = (s.strat || []).length ? `<div class="card"><h2 style="margin-top:0">★ 事前登録した買い方に該当</h2><div class="scroll"><table>
-      <tr><th>買い目</th><th>今</th><th>この倍率以上</th><th>EV</th></tr>
-      ${s.strat.map(([id, lab, bt, k, od, ev, line]) => `<tr class="buy"><td>${esc(bt)} ${esc(fmtKey(bt, k))}<div class="muted">${esc(lab)}</div></td>
-      <td>${x1(od)}倍</td><td>${x1(line)}倍</td><td class="ev-hi">${ev.toFixed(2)}</td></tr>`).join('')}</table></div></div>` : '';
+    const riders = (d.riders || []).map(([c, n, p, pt, sty]) => `<span>${car(c)} ${esc(n)} <span style="opacity:.8">${esc(p)}・${esc(pt)}・${esc(sty)}</span></span>`).join('');
+    const wins = Object.entries(s.win || {}).sort((a, b) => b[1] - a[1]);
+    const win = `<div class="winbar">${wins.map(([c, p]) => `<span title="${c}番 ${pct(p)}" style="width:${p * 100}%;background:${(CAR[c] || ['#999'])[0]};${c == 1 ? 'box-shadow:inset 0 0 0 1px #bbb' : ''}"></span>`).join('')}</div>
+      <div class="mini">${wins.slice(0, 4).map(([c, p]) => `${car(c)} <b>${pct(p)}</b>`).join(' ')}<span class="muted">← 1着の確率</span></div>`;
+    const strat = hero(s);
     const view = st.view || 'single';
     const tables = view === 'group' ? groupSection(s.groups || {}) : TYPES.map((bt) => typeTable(bt, s.types[bt] || [])).join('');
-    app.innerHTML = head + `<main><div class="card"><div class="ttl" style="font-size:18px;font-weight:700">${esc(d.venue)} ${d.rn}R <span class="muted">締切 ${esc(d.deadline || '-')}・発走 ${esc(d.start)}</span></div>
+    app.innerHTML = head + `<main><div class="card"><div class="ttl" style="font-size:20px">${esc(d.venue)} ${d.rn}R <span class="muted" style="font-weight:normal">締切 ${esc(d.deadline || '-')}・発走 ${esc(d.start)}</span></div>
       <div class="riders">${riders}</div>
       <div class="seg">${SNAPS.map((x) => `<button data-s="${x}" ${d.snaps[x] ? '' : 'disabled'} class="${x === st.snap ? 'on' : ''}">${SNAP_LABEL[x]}</button>`).join('')}</div>
-      <div class="muted">取得 ${esc(s.at)} ／ ${s.market_ok ? 'オッズと融合済み' : '<span style="color:var(--bad)">3連単オッズ不足（参考値）</span>'}</div>
-      <div class="muted" style="margin-top:4px">1着の確率: ${win}</div>
+      <div class="muted">取得 ${esc(s.at)} ／ ${s.market_ok ? 'オッズと融合済み' : '<span style="color:var(--bad);font-weight:700">3連単オッズ不足（参考値）</span>'}</div>
+      ${win}
       <div class="seg" id="view"><button data-v="single" class="${view === 'single' ? 'on' : ''}">1点ごと</button>
       <button data-v="group" class="${view === 'group' ? 'on' : ''}">買い目群（合成オッズ）</button></div></div>${strat}${tables}
       <p class="note">EV＝当たる確率×今のオッズ（ワイドは最低倍率）。「この倍率以上」＝EVが1.10になる倍率。確率0.5%未満・300倍超は既定で隠しています。</p></main>`;
@@ -211,16 +269,54 @@ h2 { font-size: 15px; margin: 16px 0 6px; }
     app.querySelectorAll('#view button').forEach((b) => b.onclick = () => { st.view = b.dataset.v; store.set('kb_view', st.view); render(); });
     app.querySelectorAll('.more').forEach((b) => b.onclick = () => { st.showAll[b.dataset.t] = !st.showAll[b.dataset.t]; render(); });
   }
+  // おすすめ（2車複・ワイドで期待値1.10以上: ★事前登録・1点・買い目群）を大きく表示。無ければ「見送り」と、あと何倍で買いか
+  function hero(s) {
+    const recs = [];
+    const seen = new Set();
+    const pOf = (bt, k) => { const x = (s.types[bt] || []).find((r) => r[0] === k); return x ? x[1] : null; };
+    (s.strat || []).forEach(([id, lab, bt, k, od, ev, line]) => { seen.add(bt + k); recs.push({ kind: '★ 事前登録', bt, keys: [k], od, ev, line, P: pOf(bt, k), lab }); });
+    for (const bt of VALIDATED) {
+      (s.types[bt] || []).filter(([k, p, od, ev]) => ev >= 1.1 && p >= 0.005 && od <= 300 && !seen.has(bt + k)).slice(0, 3)
+        .forEach(([k, p, od, ev, line]) => recs.push({ kind: '1点', bt, keys: [k], od, ev, line, P: p }));
+      const g = (s.groups || {})[bt];
+      if (g) {
+        [...(g.ev || []), ...(g.hit || [])].forEach((r) => {
+          const [lab, n, P, syn, ev, evr, st2, cut, n2, P2, syn2, ev2, evr2, st3] = r;
+          if (n < 2) return;
+          if (cut && ev2 >= 1.1) recs.push({ kind: '買い目群（✂切り）', bt, keys: st3.map((x) => x[0]), od: syn2, ev: ev2, P: P2, lab: lab + ' から ' + cut.map((k) => fmtKey(bt, k)).join('・') + ' を切る', group: true });
+          else if (ev >= 1.1) recs.push({ kind: '買い目群', bt, keys: st2.map((x) => x[0]), od: syn, ev, P, lab, group: true });
+        });
+      }
+    }
+    const uniq = [];
+    const sig = new Set();
+    recs.sort((a, b) => b.ev - a.ev).forEach((r) => { const k = r.bt + r.keys.slice().sort().join(','); if (!sig.has(k)) { sig.add(k); uniq.push(r); } });
+    if (!uniq.length) {
+      const near = [];
+      for (const bt of VALIDATED) (s.types[bt] || []).filter(([k, p, od]) => p >= 0.03 && od <= 300).slice(0, 2).forEach((x) => near.push([bt, ...x]));
+      near.sort((a, b) => b[4] - a[4]);
+      return `<div class="card skip"><div class="th2">⏸ 今は見送り <span class="muted" style="font-weight:normal">2車複・ワイドで期待値1.10以上の買い目がありません</span></div>
+        ${near.slice(0, 3).map(([bt, k, p, od, ev, line]) => `<div class="mini">${tbadge(bt)} ${combo(bt, k)} <span class="muted">今 ${x1(od)}倍 → <b>${x1(line)}倍以上</b>なら買い</span> ${evb(ev)}</div>`).join('')}</div>`;
+    }
+    return `<div class="card hero"><h2>🔥 おすすめの買い目 <span class="muted" style="font-weight:normal">（${esc(SNAP_LABEL[st.snap] || '')}のオッズ）</span></h2>
+      ${uniq.slice(0, 6).map((r) => { const t = tier(r.ev); return `<div class="rec ${t}">
+        <div>${tbadge(r.bt)} <span class="pill ${r.kind.startsWith('★') ? 'good' : ''}">${esc(r.kind)}</span>
+          <div style="margin-top:6px" class="combos">${r.group ? r.keys.slice(0, 8).map((k) => combo(r.bt, k)).join('') + (r.keys.length > 8 ? ` <span class="muted">ほか${r.keys.length - 8}点</span>` : '') : combo(r.bt, r.keys[0], true)}</div></div>
+        <div style="text-align:right">${evb(r.ev)}<div class="buy">${r.group ? '合成 ' + x1(r.od) + '倍' : '今 ' + x1(r.od) + '倍'}</div></div>
+        <div class="line2">${r.group ? `${r.keys.length}点・的中 ${pct(r.P)}・${esc(r.lab)}` : `当たる確率 ${r.P != null ? pct(r.P) : '-'}・<b>${x1(r.line)}倍以上なら買い</b>${r.lab ? '・' + esc(r.lab) : ''}`}</div>
+      </div>`; }).join('')}
+      <div class="muted">1点100円など少額・一定額で。締切直前にもう一度倍率を確認し、基準を下回ったら見送り。</div></div>`;
+  }
   function typeTable(bt, rows) {
-    if (!rows.length) return `<div class="card"><h2 style="margin:0">${esc(bt)} <span class="muted" style="font-weight:normal">この時点のオッズがありません</span></h2></div>`;
+    if (!rows.length) return `<div class="card"><div class="th2" style="margin:0">${tbadge(bt)} <span class="muted" style="font-weight:normal">この時点のオッズがありません</span></div></div>`;
     const all = !!st.showAll[bt];
     const shown = all ? rows : rows.filter((x) => x[1] >= 0.005 && x[2] <= 300).slice(0, 15);
     const tag = VALIDATED.has(bt) ? '<span class="pill good">検証済み</span>' : '<span class="pill warn">参考</span>';
-    return `<div class="card"><h2 style="margin-top:0">${esc(bt)} ${tag}<span class="muted" style="font-weight:normal"> 期待値の高い順</span></h2>
-      <div class="scroll"><table><tr><th>組</th><th>確率</th><th>今</th><th>この倍率以上</th><th>EV</th></tr>
-      ${shown.map(([k, p, od, ev, line]) => `<tr class="${VALIDATED.has(bt) && ev >= 1.1 && p >= 0.005 && od <= 300 ? 'buy' : ''}">
-        <td>${esc(fmtKey(bt, k))}</td><td>${pct(p)}</td><td>${x1(od)}倍</td><td>${x1(line)}倍</td>
-        <td class="${ev >= 1.1 ? 'ev-hi' : 'ev-lo'}">${ev.toFixed(2)}</td></tr>`).join('')}</table></div>
+    return `<div class="card" style="border-top:4px solid ${TCOL[bt]}"><div class="th2">${tbadge(bt)} ${tag}<span class="muted" style="font-weight:normal">期待値の高い順</span></div>
+      <div class="scroll"><table><tr><th>組</th><th>確率</th><th>今</th><th>買い基準</th><th>EV</th></tr>
+      ${shown.map(([k, p, od, ev, line]) => `<tr class="${VALIDATED.has(bt) && ev >= 1.1 && p >= 0.005 && od <= 300 ? 'buy' + (ev >= 1.3 ? ' s' : '') : ''}">
+        <td>${combo(bt, k)}</td><td>${pct(p)}</td><td><b>${x1(od)}</b>倍</td><td>${x1(line)}倍</td>
+        <td>${evb(ev).replace(/◎強く推奨 |○推奨 |△注目 /, '')}</td></tr>`).join('')}</table></div>
       <button class="more" data-t="${esc(bt)}">${all ? '上位だけ表示' : `全${rows.length}組を表示`}</button></div>`;
   }
   function groupSection(groups) {
@@ -235,24 +331,24 @@ h2 { font-size: 15px; margin: 16px 0 6px; }
       const tag = bt === '2車複' ? '<span class="pill">検証中</span>' : '<span class="pill warn">参考</span>';
       const detail = (n, P, syn, ev, evr, st2) => `
         <div class="scroll"><table><tr><th>買い目</th><th>オッズ</th><th>1000円の配分</th></tr>
-        ${st2.map(([k, stake, od]) => `<tr><td>${esc(fmtKey(bt, k))}</td><td>${x1(od)}倍</td><td>${stake}円</td></tr>`).join('')}</table></div>
+        ${st2.map(([k, stake, od]) => `<tr><td>${combo(bt, k)}</td><td>${x1(od)}倍</td><td><b>${stake}</b>円</td></tr>`).join('')}</table></div>
         <div class="muted">100円単位に丸めた配分での期待値 ${evr.toFixed(2)}</div>`;
-      const sumLine = (n, P, syn, ev) => `的中 ${pct(P)} ／ ${syn ? '合成 ' + syn.toFixed(1) + '倍' : '同額'} ／ <span class="${ev >= 1.1 ? 'ev-hi' : (ev >= 1.0 ? '' : 'ev-lo')}">EV ${ev.toFixed(2)}</span>`;
+      const sumLine = (n, P, syn, ev) => `的中 <b>${pct(P)}</b> ・ ${syn ? '合成 <b>' + syn.toFixed(1) + '</b>倍' : '同額'} ${evb(ev)}`;
       const list = (rows, title) => !rows.length ? '' : `<h2>${title}</h2>${rows.map((r) => {
         const [lab, n, P, syn, ev, evr, st2, cut, n2, P2, syn2, ev2, evr2, st3] = r;
         const best = cut ? Math.max(ev, ev2) : ev;
-        const cutHtml = cut ? `<div style="margin-top:6px;padding:6px 8px;border-left:3px solid var(--good);background:var(--good-soft);border-radius:6px">
-          ✂ <b>${cut.map((k) => esc(fmtKey(bt, k))).join('・')}</b> を切ると ${n2}点・${sumLine(n2, P2, syn2, ev2)}
+        const cutHtml = cut ? `<div class="cut">
+          ✂ <span class="combos" style="display:inline-flex">${cut.map((k) => combo(bt, k)).join('')}</span> を切ると ${n2}点・${sumLine(n2, P2, syn2, ev2)}
           ${ev2 >= 1.0 && ev < 1.0 ? '<span class="pill good">100%超え</span>' : ''}</div>` : '';
         const more = `<details style="margin-top:4px"><summary class="muted" style="cursor:pointer">配分を見る（1000円）</summary>
           ${cut ? '<div class="muted" style="margin-top:4px">切った後</div>' + detail(n2, P2, syn2, ev2, evr2, st3) + '<div class="muted" style="margin-top:6px">切る前</div>' : ''}
           ${detail(n, P, syn, ev, evr, st2)}</details>`;
-        return `<div class="card" style="margin:6px 0;padding:8px 10px;${best >= 1.1 ? 'background:var(--good-soft)' : ''}">
-          <div style="display:flex;justify-content:space-between;gap:8px;align-items:baseline;flex-wrap:wrap">
+        return `<div class="grp ${best >= 1.3 ? 's' : (best >= 1.1 ? 'a' : '')}">
+          <div style="display:flex;justify-content:space-between;gap:8px;align-items:center;flex-wrap:wrap">
           <span><b>${esc(lab)}</b> <span class="muted">${n}点</span></span><span>${sumLine(n, P, syn, ev)}</span></div>
           ${cutHtml}${more}</div>`;
       }).join('')}`;
-      return `<div class="card"><h2 style="margin-top:0">${esc(bt)} ${tag}</h2>${list(g.ev, '期待値重視（的中率10%以上）')}${list(g.hit, '的中率重視（的中率30%以上）')}</div>`;
+      return `<div class="card" style="border-top:4px solid ${TCOL[bt]}"><div class="th2">${tbadge(bt)} ${tag}</div>${list(g.ev, '💰 期待値重視（的中率10%以上）')}${list(g.hit, '🎯 的中率重視（的中率30%以上）')}</div>`;
     }).join('');
   }
   function bindBack() { const b = document.getElementById('back'); if (b) b.onclick = () => { st.race = null; st.raceData = null; render(); }; }
