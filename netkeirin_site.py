@@ -206,6 +206,7 @@ class SiteBuilder:
             return {}
         dist3 = {tuple(int(x) for x in k.split('-')): p for k, p in probs['3連単'].items()}
         gs = F.build_groups(probs, odds, self._lines(cards), dist3)
+        gs = gs + F.combine(gs, probs, odds, dist3)  # 違う形の買い目群の組み合わせ（例: 1→2→345 ＋ 4→5→136）
         out = {}
         for bt in TYPES:
             gb = [g for g in gs if g['type'] == bt]

@@ -73,6 +73,7 @@ def main():
             continue
         dist3 = {tuple(int(x) for x in k.split('-')): p for k, p in probs['3連単'].items()}
         groups = F.build_groups(probs, odds, lines.get(rid), dist3)
+        combos = F.combine(groups, probs, odds, dist3)
         for bt in TYPES:
             gb = [x for x in groups if x['type'] == bt]
             if not gb:
@@ -80,7 +81,9 @@ def main():
             for pm in P_MINS:
                 base = [x for x in gb if x['p'] >= pm]
                 pruned = [y for y in (F.prune(x, probs, odds, pm, dist3) for x in base) if y]
-                for kind, cand in (('買い目群', base), ('買い目群＋切り', base + pruned), ('1点', [x for x in gb if x['p'] >= pm and x['n'] == 1])):
+                comb = [x for x in combos if x['type'] == bt and x['p'] >= pm]
+                for kind, cand in (('買い目群', base), ('買い目群＋切り', base + pruned), ('買い目群＋組み合わせ', base + comb),
+                                   ('1点', [x for x in gb if x['p'] >= pm and x['n'] == 1])):
                     if not cand:
                         continue
                     best = max(cand, key=lambda x: (x['ev'], -x['n']))
@@ -99,7 +102,7 @@ def main():
          '| 券種 | 選び方 | 期間 | レース数 | 平均点数 | 平均的中率(予想) | 実際の的中率 | 回収率 | 90%区間 |',
          '|---|---|---|---:|---:|---:|---:|---:|---|']
     for bt in TYPES:
-        for rule in sorted(df.loc[df.bt == bt, 'rule'].unique(), key=lambda r: ({'1点': 0, '買い目群': 1}.get(r.split()[0], 2), r)):
+        for rule in sorted(df.loc[df.bt == bt, 'rule'].unique(), key=lambda r: ({'1点': 0, '買い目群': 1, '買い目群＋切り': 2}.get(r.split()[0], 3), r)):
             for per, sub in (('発見', df[(df.bt == bt) & (df.rule == rule) & (df.date < a.split)]),
                              ('検証', df[(df.bt == bt) & (df.rule == rule) & (df.date >= a.split)])):
                 if len(sub) == 0:

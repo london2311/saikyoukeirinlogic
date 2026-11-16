@@ -183,6 +183,33 @@ def build_groups(probs, odds, lines=None, dist3=None):
     return out
 
 
+def combine(groups, probs, odds, dist3=None, top=20, p_seed=0.03):
+    """違う形の買い目群を2つ組み合わせた候補（例: 1→2→345 ＋ 4→5→136）。
+    券種ごとに期待値の高い群（的中率 p_seed 以上）上位 top 個から2つを選び、重なる点は1つにまとめて合成オッズで評価する。
+    組み合わせると的中率は上がり、期待値は元の2つの間になる（的中率を上げても期待値を保てる組を探すのに使う）"""
+    out = []
+    by_type = {}
+    for g in groups:
+        if g['p'] >= p_seed and '＋' not in g.get('label', ''):
+            by_type.setdefault(g['type'], []).append(g)
+    for bt, gs in by_type.items():
+        gs = sorted(gs, key=lambda g: (-g['ev'], g['n']))[:top]
+        seen = {frozenset(g['keys']) for g in gs}
+        for g1, g2 in combinations(gs, 2):
+            keys = list(dict.fromkeys(g1['keys'] + g2['keys']))
+            sig = frozenset(keys)
+            if len(keys) > MAX_POINTS[bt] or sig in seen or sig == frozenset(g1['keys']) or sig == frozenset(g2['keys']):
+                continue
+            if set(g1['keys']) <= set(g2['keys']) or set(g2['keys']) <= set(g1['keys']):
+                continue
+            seen.add(sig)
+            m = group_metrics(bt, keys, probs, odds, dist3)
+            if m:
+                m['label'] = f'{g1["label"]} ＋ {g2["label"]}'
+                out.append(m)
+    return out
+
+
 def prune(g, probs, odds, p_floor, dist3=None):
     """買い目を切って期待値を上げる。的中率が p_floor を下回らない範囲で、期待値の低い点から外す。
     合成オッズの配分では、ある点の「確率×オッズ」が群の期待値より低ければ、その点を外すと群の期待値は上がる
