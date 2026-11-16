@@ -377,6 +377,8 @@ def parse_racecard(entry_html: str, nk_race_id: str) -> list:
     if not table:
         raise ValueError("出走表テーブルが見つかりません")
     cols = _entry_columns(table)
+    hs_marks = parse_honshi_marks(table)
+    support = parse_support(entry_html)
 
     lines = parse_lines(entry_html)
     ltype = line_type_of(lines)
@@ -440,6 +442,8 @@ def parse_racecard(entry_html: str, nk_race_id: str) -> list:
                                                  "line_head", "is_single")})
         row["line_type"] = ltype
         row.setdefault("comment", "")
+        row["hs_mark"] = hs_marks.get(car, "")
+        row.update(zip(SUPPORT_COLS, support.get(car, ("", "", ""))))
         rows.append(row)
 
     # 列順を既存 CSV に合わせる
@@ -449,8 +453,130 @@ def parse_racecard(entry_html: str, nk_race_id: str) -> list:
              "standing_count", "home_count", "back_count", "escape_count", "makuri_count",
              "sashi_count", "mark_count", "first_count", "second_count", "third_count", "out_count",
              "line", "line_position", "line_order", "line_size", "line_head", "is_single",
-             "line_type", "comment"]
+             "line_type", "comment"] + MARK_COLS
     return [{k: r.get(k, "") for k in order} for r in rows]
+
+
+# ---------------------------------------------------------------- 本紙の印・ユーザー支持率・本紙の買い目
+# 出走表ページに無料で載っている分だけを使う（有料予想 = ウマい車券 には触れない）。
+# 見解の文章は著作物のため保存しない。
+
+SUPPORT_COLS = ["sup1", "sup2", "sup3"]          # 3連単ユーザー支持率（1着・2着・3着、%）
+MARK_COLS = ["hs_mark"] + SUPPORT_COLS            # hs_mark: 1=◎ 2=○ 3=▲ 4=△ 5=☆ 100=無印
+MARKS_FIELDS = ["race_id", "car_number"] + MARK_COLS
+PICK_FIELDS = ["race_id", "date", "bet_type", "combination", "kind"]
+ORDERED_BETS = {"3連単", "2車単", "枠単"}
+
+
+def parse_honshi_marks(table_html: str) -> dict:
+    """出走表テーブルの「本紙」列 → {車番: 印コード}。列が無い・値が無い選手は含めない。"""
+    out = {}
+    for tr in _rows(table_html):
+        if "PlayerList" not in tr[:80]:
+            continue
+        tds = _cells(tr)
+        if len(tds) < 2:
+            continue
+        m = re.search(r'Yoso01[^>]*>\s*<span[^>]*display:\s*none;?[^>]*>\s*(\d+)\s*</span>', tr)
+        if m:
+            out[_num(_text(tds[1]))] = int(m.group(1))
+    return out
+
+
+def parse_support(entry_html: str) -> dict:
+    """「3連単ユーザー支持率」のグラフ → {車番: (1着%, 2着%, 3着%)}。"""
+    i = entry_html.find("ユーザー支持率")
+    if i < 0:
+        return {}
+    block = entry_html[i:i + 20000]
+    out = {}
+    for car, data in re.findall(r'label:\s*"(\d+)番[^"]*"\s*,\s*data:\s*\[([^\]]*)\]', block):
+        vals = [_num(v) for v in data.split(",")][:3]
+        if len(vals) == 3 and all(v != "" for v in vals):
+            out[int(car)] = tuple(round(float(v), 1) for v in vals)
+    return out
+
+
+def _pick_groups(num_html: str) -> list:
+    """買い目1件（div.Num の中身）→ [[車番, ...], ...]（着順・位置ごとの候補）"""
+    groups = []
+    rest = num_html
+    m = re.search(r'<div class="Shaban_Other">(.*)$', rest, flags=re.S)
+    other = None
+    if m:
+        rest, other = rest[:m.start()], m.group(1)
+    for n in re.findall(r'class="Wakuban[^"]*"[^>]*>\s*(\d+)\s*<', rest):
+        groups.append([int(n)])
+    if other is not None:
+        nums = [int(n) for n in re.findall(r'class="Wakuban[^"]*"[^>]*>\s*(\d+)\s*<', other)]
+        if nums:
+            groups.append(nums)
+    return groups
+
+
+def expand_pick(bet: str, groups: list) -> list:
+    """位置ごとの候補 → 1点ずつの組（重複・同じ車番の重なりは除く。順不同の券種は昇順）"""
+    combos = [[]]
+    for g in groups:
+        combos = [c + [n] for c in combos for n in g if n not in c]
+    out = []
+    for c in combos:
+        key = c if bet in ORDERED_BETS else sorted(c)
+        k = "-".join(map(str, key))
+        if k not in out:
+            out.append(k)
+    return out
+
+
+def parse_honshi_picks(entry_html: str, nk_race_id: str) -> list:
+    """「netkeirin本紙の競輪予想」の買い目 → honshi_picks.csv の行（展開済みの1点ずつ）"""
+    i = entry_html.find("netkeirin本紙の競輪予想")
+    if i < 0:
+        return []
+    j = entry_html.find("YosokaLinkBtn01", i)
+    block = entry_html[i:j if j > 0 else i + 20000]
+    w = block.find('class="OddsWrap"')
+    if w < 0:
+        return []
+    block = block[w:]
+    date = split_race_id(nk_race_id)[0]
+    race_id = to_wt_race_id(nk_race_id)
+    rows = []
+    for dl in re.findall(r"<dl\b[^>]*>(.*?)</dl>", block, flags=re.S):
+        dt = re.search(r"<dt>(.*?)</dt>", dl, flags=re.S)
+        if not dt:
+            continue
+        bet = BET_NAME_MAP.get(_text(dt.group(1)).replace(" ", ""), _text(dt.group(1)))
+        for dd in re.findall(r"<dd\b[^>]*>(.*?)</dd>", dl, flags=re.S):
+            num = re.search(r'<div class="Num">(.*?)<span class="OddsData', dd, flags=re.S)
+            groups = _pick_groups(num.group(1) if num else dd)
+            if not groups:
+                continue
+            sep = "→" if bet in ORDERED_BETS else "-"
+            kind = ("フォーメーション:" if any(len(g) > 1 for g in groups) else "1点:") + \
+                sep.join(",".join(map(str, g)) for g in groups)
+            for combo in expand_pick(bet, groups):
+                rows.append({"race_id": race_id, "date": date, "bet_type": bet, "combination": combo, "kind": kind})
+    return rows
+
+
+def marks_rows(cards: list) -> list:
+    """parse_racecard の行 → marks.csv の行"""
+    return [{k: c.get(k, "") for k in MARKS_FIELDS} for c in cards]
+
+
+def save_marks(out_dir: Path, cards: list, picks: list) -> tuple:
+    """marks.csv・honshi_picks.csv（年フォルダ）に追記。(追加した印の行数, 買い目の行数)"""
+    n_m = n_p = 0
+    by_year = {}
+    for r in cards:
+        by_year.setdefault(str(r["race_id"])[-8:-4], ([], []))[0].append(r)
+    for r in picks:
+        by_year.setdefault(str(r["date"])[:4], ([], []))[1].append(r)
+    for y, (cs, ps) in sorted(by_year.items()):
+        n_m += KC.append_csv(out_dir / y / "marks.csv", marks_rows(cs), ["race_id", "car_number"])
+        n_p += KC.append_csv(out_dir / y / "honshi_picks.csv", ps, ["race_id", "bet_type", "combination"])
+    return n_m, n_p
 
 
 # ---------------------------------------------------------------- 結果・払戻・レース情報
@@ -649,12 +775,13 @@ def collect_date(date: str, out_dir: Path, skip: set = None) -> dict:
         race_ids = [r for r in race_ids if to_wt_race_id(r) not in skip]
         print(f"取得済みのため省略: {before - len(race_ids)}")
     stats = dict(races=0, failed=0, no_result=0, odds_races=0, odds_failed=0, listed=len(race_ids))
-    metas, cards, orders, payoffs, odds = [], [], [], [], []
+    metas, cards, orders, payoffs, odds, picks = [], [], [], [], [], []
     for nk in race_ids:
         try:
             entry = fetch(f"{BASE_URL}/race/entry/", {"race_id": nk})
             result = fetch(f"{BASE_URL}/race/result/", {"race_id": nk})
             c = parse_racecard(entry, nk)
+            pk = parse_honshi_picks(entry, nk)
             r = parse_result(result, nk)
             if not r["orders"]:
                 stats["no_result"] += 1
@@ -681,6 +808,7 @@ def collect_date(date: str, out_dir: Path, skip: set = None) -> dict:
             print(f"  ! {nk}: オッズ取得失敗 {type(e).__name__}")
         metas.append(m)
         cards.extend(c)
+        picks.extend(pk)
         orders.extend(r["orders"])
         payoffs.extend(r["payoffs"])
         odds.extend(o)
@@ -695,7 +823,11 @@ def collect_date(date: str, out_dir: Path, skip: set = None) -> dict:
     year_dir = out_dir / date[:4]
     print("=== 保存 ===")
     print(f"races.csv      +{KC.append_csv(year_dir / 'races.csv', metas, ['race_id'])}")
-    print(f"racecards.csv  +{KC.append_csv(year_dir / 'racecards.csv', cards, ['race_id', 'car_number'])}")
+    # 本紙の印・支持率は marks.csv にだけ書く（racecards.csv の列は増やさない）
+    plain = [{k: v for k, v in c.items() if k not in MARK_COLS} for c in cards]
+    print(f"racecards.csv  +{KC.append_csv(year_dir / 'racecards.csv', plain, ['race_id', 'car_number'])}")
+    n_m, n_p = save_marks(out_dir, cards, picks)
+    print(f"marks.csv      +{n_m} / honshi_picks.csv +{n_p}")
     print(f"results.csv    +{KC.append_csv(year_dir / 'results.csv', orders, ['race_id', 'car_number'])}")
     print(f"payoffs.csv    +{KC.append_csv(year_dir / 'payoffs.csv', payoffs, ['race_id', 'bet_type', 'combination'])}")
     print(f"odds           +{KC.append_odds_csv(odds)}")
