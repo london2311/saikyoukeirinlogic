@@ -29,6 +29,24 @@ P_MINS = [0.05, 0.15, 0.30]
 TYPES = ['3連単', '3連複', '2車単', '2車複', 'ワイド']
 
 
+def load_lines(roots):
+    """出走表から各レースの並び（先頭から）。ライン決着の候補に使う"""
+    import glob
+    frames = []
+    for r in roots:
+        for p in glob.glob(os.path.join(r, 'data', '20??', 'racecards.csv')):
+            frames.append(pd.read_csv(p, dtype=str, usecols=lambda c: c in ('race_id', 'car_number', 'line_order', 'line_position', 'is_single', 'absent')))
+    c = pd.concat(frames).drop_duplicates(['race_id', 'car_number'], keep='last')
+    c = c[pd.to_numeric(c['absent'], errors='coerce').fillna(0) == 0]
+    c = c[pd.to_numeric(c['is_single'], errors='coerce').fillna(1) == 0]
+    c['pos'] = pd.to_numeric(c['line_position'], errors='coerce')
+    c['car'] = pd.to_numeric(c['car_number'], errors='coerce').astype('Int64')
+    out = {}
+    for (rid, lo), g in c.dropna(subset=['pos', 'car']).groupby(['race_id', 'line_order']):
+        out.setdefault(rid, []).append([int(x) for x in g.sort_values('pos')['car']])
+    return out
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--split', type=int, default=20260801)
@@ -36,6 +54,7 @@ def main():
     ap.add_argument('--limit', type=int, default=0)
     a = ap.parse_args()
     t = pd.read_pickle(a.tickets)
+    lines = load_lines(['/home/user/datebase', os.path.dirname(HERE)])
     t0 = time.time()
     rows = []  # (race, date, type, rule, n, P, ev, stake, ret)
     races = t.groupby('race_id', sort=False)
@@ -53,7 +72,7 @@ def main():
         if '3連単' not in odds:
             continue
         dist3 = {tuple(int(x) for x in k.split('-')): p for k, p in probs['3連単'].items()}
-        groups = F.build_groups(probs, odds, None, dist3)
+        groups = F.build_groups(probs, odds, lines.get(rid), dist3)
         for bt in TYPES:
             gb = [x for x in groups if x['type'] == bt]
             if not gb:

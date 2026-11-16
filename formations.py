@@ -135,6 +135,17 @@ def build_groups(probs, odds, lines=None, dist3=None):
             for k in range(1, 5):
                 add('3連単', f'{a}{b}→{a}{b}→{"".join(map(str, rest[:k]))}',
                     [f'{x}-{y}-{c}' for x, y in ((a, b), (b, a)) for c in rest[:k]])
+        for a in cars:  # 1頭軸マルチ（軸が何着でもよい）: 相手2頭=6点、相手3頭=18点
+            part = sorted((x for x in cars if x != a), key=lambda x: -sum(p for k, p in p3.items() if str(a) in k.split('-') and str(x) in k.split('-')))
+            for k in (2, 3):
+                T = part[:k]
+                keys = [f'{x}-{y}-{z}' for b, c in combinations(T, 2) for x, y, z in permutations((a, b, c))]
+                add('3連単', f'{a}軸マルチ（相手{"".join(map(str, T))}）', keys)
+        for a, b in combinations(cars, 2):  # 2頭軸マルチ: 相手1頭=6点、2頭=12点、3頭=18点
+            rest = sorted((c for c in cars if c not in (a, b)), key=lambda c: -sum(p3k(*o) for o in permutations((a, b, c))))
+            for k in (1, 2, 3):
+                keys = [f'{x}-{y}-{z}' for c in rest[:k] for x, y, z in permutations((a, b, c))]
+                add('3連単', f'{a}{b}軸マルチ（相手{"".join(map(str, rest[:k]))}）', keys)
         for T in combinations(cars, 3):  # 3頭BOX
             add('3連単', f'{"".join(map(str, T))} BOX', [f'{x}-{y}-{z}' for x, y, z in permutations(T)])
     # ---- 3連複
