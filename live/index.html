@@ -315,7 +315,7 @@ h2 { font-size: 15px; margin: 16px 0 6px; }
     const cards = recs.slice(0, 12).map((r) => {
       const done = betOf(r.race, r.bt, r.key);
       return `<div class="rec ${tier(r.ev)}" style="margin:8px 0">
-        <div><b>${esc(r.venue)} ${r.rn}R</b> <span class="${r.m <= 3 ? 'count soon' : 'count'}">締切まで ${r.m}分（${esc(r.deadline || '')}）</span>
+        <div><b>${esc(r.venue)} ${r.rn}R</b> <span class="${r.m <= 3 ? 'count soon' : 'count'}">${untilLabel(r.m)}（${esc(r.deadline || '')}）</span>
           <div style="margin-top:6px">${tbadge(r.bt)} ${combo(r.bt, r.key, true)}</div></div>
         <div style="text-align:right">${evb(r.ev)}<div class="buy">今 ${x1(r.od)}${r.omax ? '〜' + x1(r.omax) : ''}倍</div><div class="muted">確定予想 ${x1(r.of)}倍</div></div>
         <div class="line2">当たる確率 ${pct(r.p)}・<b>${x1(r.line)}倍以上なら買い</b>・${esc(SNAP_LABEL[r.snap] || '')}（${esc(r.at || '')}）のオッズ</div>
@@ -427,11 +427,23 @@ h2 { font-size: 15px; margin: 16px 0 6px; }
   }
 
   // ---- 一覧
+  // 一覧の日付（YYYYMMDD）の hh:mm まで、今（JST）から何分か。前日のデータなら負、翌日の予定なら大きな正の値
   function minutesTo(hhmm) {
     if (!hhmm) return null;
     const [h, m] = hhmm.split(':').map(Number);
     const now = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Tokyo' }));
-    return Math.round((h * 60 + m) - (now.getHours() * 60 + now.getMinutes()));
+    const d = String((st.index && st.index.date) || '');
+    const day = /^\d{8}$/.test(d) ? new Date(+d.slice(0, 4), +d.slice(4, 6) - 1, +d.slice(6, 8)) : new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const t = new Date(day.getFullYear(), day.getMonth(), day.getDate(), h, m);
+    return Math.round((t - now) / 60000 + now.getSeconds() / 60);
+  }
+  const untilLabel = (m) => m >= 60 ? `締切まで ${Math.floor(m / 60)}時間${m % 60 ? (m % 60) + '分' : ''}` : `締切まで ${m}分`;
+  function dayBanner() {
+    const d = String(st.index.date || ''), t = ymd(todayJST());
+    if (!d || d === t) return '';
+    const md = `${+d.slice(4, 6)}/${+d.slice(6, 8)}`;
+    return d > t ? `<div class="card" style="border:2px solid #2f5bea">📅 <b>${md}（明日）のレース予定</b>です。オッズと期待値は、各レースの締切15分前から順に出ます。</div>`
+      : `<div class="card" style="border:2px dashed var(--sub)">🕘 ${md} のデータです（終わったレース）。今日の予定は、取得され次第ここに出ます。</div>`;
   }
   function render() {
     if (st.page === 'bank') return bankView();
@@ -445,7 +457,7 @@ h2 { font-size: 15px; margin: 16px 0 6px; }
     const list = races.filter((r) => r.venue === st.venue).sort((a, b) => a.rn - b.rn);
     app.innerHTML = `<header><h1>期待値ボード <span class="upd">${esc(st.index.date)} 更新 ${esc((st.index.updated || '').slice(11, 16))} <button class="back" id="tobank" style="margin-left:8px">💰資金管理</button></span></h1>
       <div class="tabs">${venues.map((v) => `<button class="tab ${v === st.venue ? 'on' : ''}" data-v="${esc(v)}">${esc(v)}${races.some((r) => r.venue === v && recCount(r) && (minutesTo(r.deadline || r.start) ?? -1) > 0) ? '<span class="dot"></span>' : ''}</button>`).join('')}</div></header>
-      <main>${boardHtml()}<h2 style="margin-top:18px">🏟 ${esc(st.venue || '')} のレース</h2>${evControl()}${list.map(raceCard).join('') || '<p class="muted">この場のレースはまだありません。</p>'}
+      <main>${dayBanner()}${boardHtml()}<h2 style="margin-top:18px">🏟 ${esc(st.venue || '')} のレース</h2>${evControl()}${list.map(raceCard).join('') || '<p class="muted">この場のレースはまだありません。</p>'}
       <div class="card legend">${evb(1.35)}${evb(1.15)}${evb(1.03)}<span>EV＝当たる確率×今のオッズ。1.10以上が買いの目安</span></div>
       <p class="note">締切は発走の5分前です。締切2分前のオッズが最後の判断材料です。🔥＝2車複・ワイドで期待値1.10以上（事前登録の★・買い目群を含む）。
       2車複・ワイド以外は過去の検証で負けていたため参考表示です。緑の点が付いた場は、これから締切のおすすめがあります。</p></main>`;
@@ -463,7 +475,7 @@ h2 { font-size: 15px; margin: 16px 0 6px; }
   function raceCard(r) {
     const m = minutesTo(r.deadline || r.start);
     const cls = m == null ? 'count past' : (m > 5 ? 'count' : (m > 0 ? 'count soon' : 'count past'));
-    const when = m == null ? '' : (m > 0 ? `締切まで ${m}分` : (minutesTo(r.start) > 0 ? '締切済み' : '発走済み'));
+    const when = m == null ? '' : (m > 0 ? untilLabel(m) : (minutesTo(r.start) > 0 ? '締切済み' : '発走済み'));
     const snaps = SNAPS.map((s) => `<span class="pill ${(r.snaps || []).includes(s) ? 'done' : 'off'}">${SNAP_LABEL[s].replace('締切', '')}</span>`).join('');
     const n = recCount(r);
     const top = r.best ? Math.max(...(r.best.rows || []).filter(([bt]) => VALIDATED.has(bt)).map((x) => x[3]), 0) : 0;

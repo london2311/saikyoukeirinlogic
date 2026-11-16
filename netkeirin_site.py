@@ -165,7 +165,7 @@ class SiteBuilder:
         if res.get('market_ok') and self.strategies:
             import snapshot_ledger as L
             for s in self.strategies:
-                for t in L.select(s, res['tickets']):
+                for t in L.select(s, res['tickets'], res):
                     strat.append([s['id'], s['label'], t['type'], t['key'], t['odds'], round(t['ev'], 3), buy_line(t['prob'], s.get('min', 1.10))])
         groups = self._groups(res, cards, snap) if res.get('market_ok') else {}
         riders = []

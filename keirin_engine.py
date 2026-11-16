@@ -37,6 +37,10 @@ DEFAULTS = dict(
     unit=100,           # 購入単位（円）
     max_bets=6,         # 最大点数
 )
+# ガールズ（全員 L級）の補正: 1番人気が1着の時の2着は、得点4位以下の選手が（人気選手の後ろから）来やすく、逃げ型は来にくい。
+# 市場もモデルも見落としている（analysis/girls_study.py: 4〜7月で推定 → 8〜11月で対数損失が改善。A級・S級では改善しない）。
+# 1番人気が1着の組の中だけで配り直すので、1番人気が勝つ確率そのものは変えない。
+GIRLS_ADJ = dict(weak=0.24, nige=-0.50)
 EV_TYPES = ['3連単', '3連複', '2車単', '2車複', 'ワイド']
 HIT_TYPES = ['ワイド', '2車複', '3連複', '2車単']
 
@@ -85,6 +89,29 @@ def model_dist(model, riders, venue_name):
     R = dict(riders=riders, X=T.rider_matrix(riders, T.VENUE_PREFECTURE.get(venue_name)))
     d = T.predict_dist(model, R)
     return {f'{a}-{b}-{c}': p for (a, b, c), p in d.items()}
+
+
+def is_girls(cards):
+    rows = [r for r in cards if str(r.get('absent', 0)) not in ('1', 'True', 'true')]
+    return bool(rows) and all(str(r.get('class', '')).strip() in ('4', '4.0', 'L', 'L級') for r in rows)
+
+
+def girls_adjust(f, outs, riders, q, adj=GIRLS_ADJ):
+    """ガールズの補正後の f と、その内容 {fav, up: [車番], down: [車番]}"""
+    win = {}
+    for i, o in enumerate(outs):
+        win[o[0]] = win.get(o[0], 0.0) + q[i]
+    fav = max(win, key=win.get)
+    order = sorted(riders, key=lambda r: -r['point'])  # 同点は車番の若い順
+    rank = {r['num']: i + 1 for i, r in enumerate(order)}
+    u = {r['num']: (adj['weak'] if rank[r['num']] >= 4 else 0.0) + (adj['nige'] if r['style'] == '逃' else 0.0) for r in riders}
+    idx = np.array([i for i, o in enumerate(outs) if o[0] == fav])
+    g = f.copy()
+    blk = f[idx]
+    new = blk * np.exp([u.get(outs[i][1], 0.0) for i in idx])
+    g[idx] = new * blk.sum() / new.sum()
+    return g, dict(fav=fav, up=sorted(n for n, v in u.items() if v > 0 and n != fav),
+                   down=sorted(n for n, v in u.items() if v < 0 and n != fav))
 
 
 # ------------------------------------------------------------ オッズ
@@ -181,6 +208,7 @@ def analyze(model, cards, odds_rows, venue_name, settings=None):
     p = np.array([pdist[k] for k in keys])
     p = p / p.sum()
     oi = odds_index(odds_rows)
+    girls, girls_info = is_girls(cards), None
 
     # 市場確率（3連単オッズの逆数を正規化）
     t3 = oi['3連単']
@@ -194,6 +222,8 @@ def analyze(model, cards, odds_rows, venue_name, settings=None):
         f = np.exp(u - u.max())
         f = f / f.sum()
         market_ok = True
+        if girls:
+            f, girls_info = girls_adjust(f, outs, riders, q)
     else:
         q, f, market_ok = None, p, False
         warnings.append(f'3連単オッズが不足しています（{cover * 100:.0f}%）。市場との融合・EV計算は行わず、モデルのみで確率を出します。')
@@ -255,7 +285,7 @@ def analyze(model, cards, odds_rows, venue_name, settings=None):
         rider_rows.append(dict(num=n, win_model=float(p[idx_win].sum()), win_market=float(q[idx_win].sum()) if q is not None else None,
                                win=float(f[idx_win].sum()), top3=float(f[idx_top3].sum())))
 
-    return dict(ok=True, market_ok=market_ok, coverage=cover, warnings=warnings, settings=opt,
+    return dict(ok=True, market_ok=market_ok, coverage=cover, warnings=warnings, settings=opt, girls=girls, girls_adj=girls_info,
                 alpha=model['alpha'], beta=model['beta'], ken=not bets, bets=bets,
                 portfolio=dict(stake=stake, exp_return=exp_ret, roi=exp_ret / stake if stake else 0.0, hit_prob=hit_prob,
                                max_pay=float(pay.max()) if bets else 0.0),

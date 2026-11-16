@@ -62,6 +62,39 @@ def test_snapshot():
     check({r['bet_type'] for r in rows} == {'3連単', 'ワイド'}, '枠番の券種は保存しない')
     check(t[0] < datetime(2099, 12, 31, 10, 1, tzinfo=N.JST), '記録すべきレースが無くなったら --until を待たずに終了')
 
+    # 期待値ボードあり: 今日のレースが終わったら、翌日の全レースの予定に切り替える
+    built = []
+
+    class FakeSite:
+        def __init__(self, date):
+            self.date, self.races, self.forced = date, [], False
+            built.append(self)
+
+        def set_races(self, r):
+            self.races = list(r)
+
+        def on_snapshot(self, *a, **k):
+            pass
+
+        def flush(self, force=False):
+            self.forced = self.forced or force
+
+        def summary(self):
+            return ''
+    S.SITE_FACTORY = lambda a, date, alerter: FakeSite(date)
+    nxt = [('210001012301', '08:30')]
+    N.list_today = lambda date, venue=None: races if date == DATE else nxt
+    t[0] = datetime(2099, 12, 31, 9, 0, tzinfo=N.JST)
+    S.main(['--out-dir', str(Path(tempfile.mkdtemp())), '--date', DATE, '--until', '11:00', '--site'], clock=lambda: t[0], sleep=sleep)
+    check([b.date for b in built] == [DATE, '21000101'] and built[1].races == nxt and built[1].forced,
+          f'レースが終わったら翌日の予定を期待値ボードに出す {[b.date for b in built]}')
+    built.clear()
+    t[0] = datetime(2099, 12, 31, 9, 0, tzinfo=N.JST)
+    S.main(['--out-dir', str(Path(tempfile.mkdtemp())), '--date', DATE, '--until', '9:20', '--site'], clock=lambda: t[0], sleep=sleep)
+    check([b.date for b in built] == [DATE], '時間帯の途中で終わる時は切り替えない')
+    S.SITE_FACTORY = None
+    N.list_today = lambda date, venue=None: races
+
     # 途中から再開しても、記録済みのものは取り直さない
     calls.clear()
     t[0] = datetime(2099, 12, 31, 9, 57, tzinfo=N.JST)
