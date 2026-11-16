@@ -142,6 +142,16 @@ odds は常に倍率、ワイドは odds=最低 / odds_max=最高、的中組は
 1日4回、1回あたり約2時間。取得済みのレース（WINTICKET 由来を含む）は取り直さない。
 補充を試みた日は `data/netkeirin_backfill.json` に記録し、繰り返さない。全部埋まれば何もせず終わる。
 
+## 事前登録した買い方の成績台帳（analysis/snapshot_ledger.py / .github/workflows/netkeirin-ledger.yml）
+
+`analysis/strategies.json` に登録した買い方（全券種）を、発走前に記録したオッズ（4分前が本番、12分前は参考）で判定し、
+翌朝に収集した実際の払戻と合わせて台帳に積み上げる。毎朝 07:53 JST に前日分を追加。
+
+- 出力（データ用リポジトリのみ）: `data/ledger/ledger.csv`（買い目1点1行）、`data/ledger/report.md`（買い方ごとの成績）
+- 登録日より前のレースは数えない。条件を変える時は新しい id で追加する（後から都合よく選ばないため）
+- 過去データでの買い方の検証は `analysis/all_types_study.py`（月ごとに学習し直すローリング予測）と
+  `analysis/calibrate_types.py`（券種ごとの第2段の較正）。出力は `analysis/out/`（公開リポジトリには入れない）
+
 ## 手元での実行
 
 ```bash

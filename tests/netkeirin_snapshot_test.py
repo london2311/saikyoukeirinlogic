@@ -99,7 +99,33 @@ def test_backfill():
     check(seen == [], '一度補充した日は繰り返さない')
 
 
+def test_refetch_odds():
+    out = Path(tempfile.mkdtemp())
+    (out / '2099').mkdir()
+    with open(out / '2099' / 'races.csv', 'w', newline='', encoding='utf-8') as f:
+        w = csv.writer(f)
+        w.writerow(['race_id', 'date', 'cancel'])
+        for i in range(130):
+            w.writerow([f'{(i % 12) + 1:02d}{23 + i // 12:02d}20991201', '20991201', 0])
+    calls = []
+
+    def fake_odds(nk, payoffs):
+        calls.append(nk)
+        rid = N.to_wt_race_id(nk)
+        return [dict(race_id=rid, date='20991201', race_number=1, bet_type='ワイド', combination='1-2', odds=2.0,
+                     odds_max=3.0, payoff='', popularity=1, absent=0)]
+    N.fetch_odds = fake_odds
+    B.main(['--out-dir', str(out), '--from', '20991201', '--to', '20991201', '--odds-from', '20991201',
+            '--odds-budget-min', '10'])
+    check(len(calls) == 130 and calls[0] == '209912012301', f'旧形式のレースのオッズを netkeirin 形式のIDで取り直す {calls[:2]}')
+    calls.clear()
+    B.main(['--out-dir', str(out), '--from', '20991201', '--to', '20991201', '--odds-from', '20991201',
+            '--odds-budget-min', '10'])
+    check(calls == [], '取り直し済みの日は繰り返さない')
+
+
 if __name__ == '__main__':
     test_snapshot()
     test_backfill()
+    test_refetch_odds()
     print('\n全テスト成功')
