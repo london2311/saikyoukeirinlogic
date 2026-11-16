@@ -97,5 +97,5 @@ jobs:
           echo "::warning::コミットの push に失敗（次回の flush で再試行）"
           SH
           python netkeirin_snapshot.py --out-dir _data_repo/data --date "$DAY" --until "$UNTIL" \
-            --offsets 15,10,5,2 --alert --alert-snaps C-5,C-2 --site \
+            --offsets 15,10,5,2 --alert --alert-snaps C-5,C-2 --site --drift _data_repo/data/ledger/drift.json \
             --flush-cmd "bash /tmp/flush.sh" --flush-min 60
