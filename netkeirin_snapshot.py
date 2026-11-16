@@ -1,0 +1,164 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+netkeirin_snapshot.py — 発走前のオッズ（全券種）を決まった時刻に記録する（私的利用のみ）
+
+  python netkeirin_snapshot.py --out-dir _data_repo/data --until 13:30 --flush-cmd "bash flush.sh"
+
+目的: 「締切直前のオッズで判定したら本当に儲かるか」を正しく検証するため。
+結果ページの最終オッズは締切後の値で、実際に買う時点のオッズとは違う。
+
+  * 今日のレース一覧（発走時刻つき）を 30 分ごとに取り直す（発走の遅れ・変更に追従）
+  * 各レースの発走 --offsets 分前（既定 12分前と4分前）に、オッズ API を 1 回ずつ呼ぶ
+    （1レースあたり 2 リクエスト。間隔は netkeirin_collector.REQUEST_INTERVAL のまま）
+  * 保存先: data/YYYY/odds_snap/snap_YYYYMMDD.csv（枠番の券種は保存しない）
+  * --until（JST の時:分、24:20 のように翌日も可）を過ぎるか、記録すべきレースが無くなったら終了
+  * --flush-cmd を指定すると、--flush-min 分ごとと終了時に実行する（データ用リポジトリへのコミット用）
+"""
+import argparse
+import json
+import subprocess
+import time
+from datetime import datetime, timedelta
+from pathlib import Path
+
+import keirin_collector as KC
+import netkeirin_collector as N
+
+KEEP_TYPES = {'3連単', '3連複', '2車単', '2車複', 'ワイド'}
+FIELDS = ['race_id', 'date', 'race_number', 'snap', 'snap_at', 'start_at', 'official_dt',
+          'bet_type', 'combination', 'odds', 'odds_max', 'popularity', 'absent']
+LIST_REFRESH_MIN = 30
+LATE_MIN = 3
+
+
+def parse_until(date: str, hhmm: str) -> datetime:
+    h, m = map(int, hhmm.split(':'))
+    return datetime.strptime(date, '%Y%m%d').replace(tzinfo=N.JST) + timedelta(hours=h, minutes=m)
+
+
+def snapshot_rows(resp: dict, nk: str, snap: str, snap_at: datetime, start: datetime) -> list:
+    body = (resp.get('data') or {}).get(f'nkrace_odds::{nk}') or {}
+    official = str(body.get('official_dt', '')) if isinstance(body, dict) else ''
+    rows = []
+    for r in N.parse_odds_api(resp, nk, []):
+        if r['bet_type'] not in KEEP_TYPES:
+            continue
+        rows.append({
+            'race_id': r['race_id'], 'date': r['date'], 'race_number': r['race_number'], 'snap': snap,
+            'snap_at': snap_at.strftime('%Y-%m-%d %H:%M:%S'), 'start_at': start.strftime('%Y-%m-%d %H:%M'),
+            'official_dt': official, 'bet_type': r['bet_type'], 'combination': r['combination'],
+            'odds': r['odds'], 'odds_max': r['odds_max'], 'popularity': r['popularity'], 'absent': r['absent'],
+        })
+    return rows
+
+
+def fetch_snapshot(nk: str) -> dict:
+    text = N.fetch(N.ODDS_API, data={'input': 'UTF-8', 'output': 'json', 'class': 'AplRaceOdds',
+                                     'method': 'get', 'compress': '0', 'race_id': nk})
+    return json.loads(text)
+
+
+def due_jobs(races: list, date: str, offsets: list, done: set, now: datetime) -> list:
+    """今記録すべき (race_id, snap名, 発走時刻)。発走時刻 − offset 分を過ぎ、まだ発走 1 分前より前のもの。"""
+    jobs = []
+    for nk, hhmm in races:
+        st = N.start_dt(date, hhmm)
+        if st is None:
+            continue
+        for off in offsets:
+            snap = f'T-{off}'
+            if (nk, snap) in done:
+                continue
+            # 一番遅い記録以外は、予定から LATE_MIN 分以上遅れたら取らない（別の時点と混ざらないように）
+            late_ok = off == min(offsets) or now < st - timedelta(minutes=off - LATE_MIN)
+            if st - timedelta(minutes=off) <= now < st - timedelta(minutes=1) and late_ok:
+                jobs.append((st - timedelta(minutes=off), nk, snap, st))
+    return [(nk, snap, st) for _, nk, snap, st in sorted(jobs)]
+
+
+def remaining(races: list, date: str, offsets: list, done: set, now: datetime) -> int:
+    n = 0
+    for nk, hhmm in races:
+        st = N.start_dt(date, hhmm)
+        if st is None or st - timedelta(minutes=1) <= now:
+            continue
+        n += sum((nk, f'T-{off}') not in done for off in offsets)
+    return n
+
+
+def main(argv=None, clock=None, sleep=time.sleep):
+    ap = argparse.ArgumentParser(description='発走前のオッズ（全券種）を記録（私的利用のみ）')
+    ap.add_argument('--out-dir', required=True, help='データ用リポジトリの data フォルダ（公開リポジトリ内は不可）')
+    ap.add_argument('--date', default=None, help='既定: 今日（JST）')
+    ap.add_argument('--until', default='24:20', help='この時刻（JST）で終了。翌日は 24:20 のように書く')
+    ap.add_argument('--offsets', default='12,4', help='発走の何分前に記録するか（カンマ区切り）')
+    ap.add_argument('--flush-cmd', default='', help='定期的に実行するコマンド（コミット用）')
+    ap.add_argument('--flush-min', type=float, default=60)
+    a = ap.parse_args(argv)
+    clock = clock or (lambda: datetime.now(N.JST))
+
+    date = a.date or clock().strftime('%Y%m%d')
+    until = parse_until(date, a.until)
+    offsets = sorted({int(x) for x in a.offsets.split(',') if x.strip()}, reverse=True)
+    KC.DATA_DIR = Path(a.out_dir)
+    path = Path(a.out_dir) / date[:4] / 'odds_snap' / f'snap_{date}.csv'
+    done = set()  # (WINTICKET 形式の race_id, snap名)
+    if path.exists():  # 途中から再開した場合は、記録済みのものを飛ばす
+        import csv
+        with open(path, newline='', encoding='utf-8-sig') as f:
+            done = {(row['race_id'], row['snap']) for row in csv.DictReader(f)}
+    races, listed_at, flushed_at = [], None, clock()
+    stats = dict(snaps=0, failed=0)
+
+    def flush():
+        nonlocal flushed_at
+        if a.flush_cmd:
+            subprocess.run(a.flush_cmd, shell=True, check=False)
+        flushed_at = clock()
+
+    def done_nk():
+        return {(nk, s) for nk, _ in races for s in (f'T-{o}' for o in offsets) if (N.to_wt_race_id(nk), s) in done}
+
+    try:
+        while clock() < until:
+            now = clock()
+            if listed_at is None or now - listed_at >= timedelta(minutes=LIST_REFRESH_MIN):
+                try:
+                    races = N.list_today(date)
+                    listed_at = now
+                    print(f'[{now:%H:%M}] レース一覧 {len(races)}件')
+                except (N.HTTPError, N.URLError, ValueError) as e:
+                    print(f'[{now:%H:%M}] レース一覧の取得に失敗 {type(e).__name__}')
+                    listed_at = now - timedelta(minutes=LIST_REFRESH_MIN - 5)
+            for nk, snap, st in due_jobs(races, date, offsets, done_nk(), clock()):
+                if clock() >= st - timedelta(minutes=1):
+                    continue
+                t = clock()
+                try:
+                    rows = snapshot_rows(fetch_snapshot(nk), nk, snap, t, st)
+                except (N.HTTPError, N.URLError, ValueError, KeyError, TypeError) as e:
+                    stats['failed'] += 1
+                    print(f'  ! {nk} {snap}: 失敗 {type(e).__name__}')
+                    rows = None
+                done.add((N.to_wt_race_id(nk), snap))
+                if rows:
+                    KC.append_csv(path, rows, ['race_id', 'snap', 'bet_type', 'combination'])
+                    stats['snaps'] += 1
+                    n3 = sum(1 for r in rows if r['bet_type'] == '3連単' and r['odds'] != '')
+                    print(f'  {nk} {snap}（発走 {st:%H:%M}）: 3連単 {n3}組')
+            if races and remaining(races, date, offsets, done_nk(), clock()) == 0:
+                print('今日の記録すべきレースは終わりました')
+                break
+            if a.flush_min and clock() - flushed_at >= timedelta(minutes=a.flush_min):
+                flush()
+            sleep(20)
+    except N.Blocked as e:
+        print(f'!! サーバーから拒否されたため中断しました（回避はしません）: {e}')
+    finally:
+        flush()
+        print(f'記録 {stats["snaps"]}件 / 失敗 {stats["failed"]}件')
+
+
+if __name__ == '__main__':
+    main()

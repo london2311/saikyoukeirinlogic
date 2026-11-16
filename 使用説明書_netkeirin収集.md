@@ -124,6 +124,24 @@ odds は常に倍率、ワイドは odds=最低 / odds_max=最高、的中組は
 
 `keirin-train.yml` も同じ `DATA_REPO` / `DATA_REPO_TOKEN` を使って `_data_repo` を読みます。
 
+## 発走前オッズの記録（netkeirin_snapshot.py / .github/workflows/netkeirin-snapshot.yml）
+
+結果ページの最終オッズは締切後の値なので、「買う時点のオッズで判定したら儲かるか」は検証できない。
+そこで各レースの **発走12分前と4分前** に、全券種（3連単・3連複・2車単・2車複・ワイド）のオッズを1回ずつ記録する。
+
+- 保存先: データ用リポジトリの `data/YYYY/odds_snap/snap_YYYYMMDD.csv`（公開側には何も書かない）
+- 列: race_id, date, race_number, snap（T-12 / T-4）, snap_at（実際に取得した時刻）, start_at, official_dt,
+  bet_type, combination, odds（ワイドは最低）, odds_max, popularity, absent
+- 1日を3つの時間帯（08:13〜13:30 / 13:07〜18:50 / 18:41〜24:20 JST）に分けて実行。1時間ごとにコミット
+- 1レースあたり2リクエスト＋レース一覧の再取得（30分ごと）。間隔は3秒のまま
+- 予定より3分以上遅れた12分前の記録は取らない（4分前は取る）。途中から再開しても記録済みは取り直さない
+
+## 過去分の補充（netkeirin_backfill.py / .github/workflows/netkeirin-backfill.yml）
+
+`data/YYYY/races.csv` のレース数が120未満の日（2026/07 以降）を、古い日から順に補充する。
+1日4回、1回あたり約2時間。取得済みのレース（WINTICKET 由来を含む）は取り直さない。
+補充を試みた日は `data/netkeirin_backfill.json` に記録し、繰り返さない。全部埋まれば何もせず終わる。
+
 ## 手元での実行
 
 ```bash

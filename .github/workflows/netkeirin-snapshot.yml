@@ -1,0 +1,90 @@
+# 発走前のオッズ（全券種）を各レースの 12分前・4分前 に記録し、非公開のデータ用リポジトリにだけコミットする。
+# 「締切直前のオッズで判定したら本当に儲かるか」を正しく検証するためのデータ（結果ページの最終オッズとは別）。
+#
+# 重要: netkeirin 利用規約により、データは私的利用の範囲内でのみ利用できる。
+#   * このリポジトリ（公開）には何もコミットしない。ログには件数・成功/失敗だけを出す。
+#   * DATA_REPO / DATA_REPO_TOKEN が未設定なら何もせず終了する。
+# 1日を3つの時間帯に分けて実行する（1ジョブの上限6時間のため）。前の時間帯が終わるまで次は待機する。
+name: netkeirin-snapshot
+
+on:
+  schedule:
+    - cron: "13 23 * * *"   # 08:13 JST 〜 13:30
+    - cron: "7 4 * * *"     # 13:07 JST 〜 18:50
+    - cron: "41 9 * * *"    # 18:41 JST 〜 24:20
+  workflow_dispatch:
+    inputs:
+      until:
+        description: "終了時刻 JST（例 18:50、翌日は 24:20）"
+        required: false
+        default: "24:20"
+
+permissions:
+  contents: read   # 公開リポジトリには書き込まない
+
+concurrency:
+  group: netkeirin-snapshot
+  cancel-in-progress: false
+
+jobs:
+  snapshot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 355
+    steps:
+      - name: 設定の確認
+        id: cfg
+        env:
+          DATA_REPO: ${{ vars.DATA_REPO }}
+          HAS_TOKEN: ${{ secrets.DATA_REPO_TOKEN != '' }}
+          SCHEDULE: ${{ github.event.schedule }}
+          UNTIL_INPUT: ${{ inputs.until }}
+        run: |
+          if [ -z "$DATA_REPO" ] || [ "$HAS_TOKEN" != "true" ]; then
+            echo "::warning::DATA_REPO / DATA_REPO_TOKEN が未設定のため、何もせず終了します。"
+            echo "ok=false" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          case "$SCHEDULE" in
+            "13 23 * * *") UNTIL="13:30" ;;
+            "7 4 * * *")   UNTIL="18:50" ;;
+            "41 9 * * *")  UNTIL="24:20" ;;
+            *)             UNTIL="${UNTIL_INPUT:-24:20}" ;;
+          esac
+          # 前の時間帯の終了を待って始まった場合でも、日付は JST の今日
+          echo "until=$UNTIL" >> "$GITHUB_OUTPUT"
+          echo "date=$(TZ=Asia/Tokyo date +%Y%m%d)" >> "$GITHUB_OUTPUT"
+          echo "ok=true" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@v4
+        if: steps.cfg.outputs.ok == 'true'
+
+      - name: データ用リポジトリ（非公開）を取得
+        if: steps.cfg.outputs.ok == 'true'
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ vars.DATA_REPO }}
+          token: ${{ secrets.DATA_REPO_TOKEN }}
+          path: _data_repo
+
+      - uses: actions/setup-python@v5
+        if: steps.cfg.outputs.ok == 'true'
+        with:
+          python-version: "3.12"
+
+      - name: 記録（保存先は _data_repo/data のみ。1時間ごとにコミット）
+        if: steps.cfg.outputs.ok == 'true'
+        env:
+          UNTIL: ${{ steps.cfg.outputs.until }}
+          DAY: ${{ steps.cfg.outputs.date }}
+        run: |
+          cat > /tmp/flush.sh <<'SH'
+          cd _data_repo || exit 0
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data
+          git diff --cached --quiet && exit 0
+          git commit -q -m "data: 発走前オッズ $(TZ=Asia/Tokyo date +%Y-%m-%d\ %H:%M)"
+          for i in 1 2 3 4; do git pull -q --rebase && git push -q && exit 0; sleep $((i * 5)); done
+          echo "::warning::コミットの push に失敗（次回の flush で再試行）"
+          SH
+          python netkeirin_snapshot.py --out-dir _data_repo/data --date "$DAY" --until "$UNTIL" \
+            --flush-cmd "bash /tmp/flush.sh" --flush-min 60

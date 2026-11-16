@@ -1,0 +1,75 @@
+# 収集が抜けている過去の日（data/YYYY/races.csv のレース数が少ない日）を netkeirin から少しずつ補充し、
+# 非公開のデータ用リポジトリにだけコミットする。1回あたり約2〜2.5時間ぶん（新しい日を始めるのは開始から105分まで）。全部埋まったら何もせず終わる。
+#
+# 重要: netkeirin 利用規約により、データは私的利用の範囲内でのみ利用できる。
+#   * このリポジトリ（公開）には何もコミットしない。ログには件数・成功/失敗だけを出す。
+name: netkeirin-backfill
+
+on:
+  schedule:
+    - cron: "29 2,7,12,17 * * *"   # 1日4回（11:29 / 16:29 / 21:29 / 02:29 JST）
+  workflow_dispatch:
+    inputs:
+      date_from:
+        description: "補充する期間の開始日 YYYYMMDD"
+        required: false
+        default: "20260701"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: netkeirin-data   # 毎朝の収集と同時には動かさない
+  cancel-in-progress: false
+
+jobs:
+  backfill:
+    runs-on: ubuntu-latest
+    timeout-minutes: 175
+    steps:
+      - name: 設定の確認
+        id: cfg
+        env:
+          DATA_REPO: ${{ vars.DATA_REPO }}
+          HAS_TOKEN: ${{ secrets.DATA_REPO_TOKEN != '' }}
+        run: |
+          if [ -z "$DATA_REPO" ] || [ "$HAS_TOKEN" != "true" ]; then
+            echo "::warning::DATA_REPO / DATA_REPO_TOKEN が未設定のため、何もせず終了します。"
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "ok=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/checkout@v4
+        if: steps.cfg.outputs.ok == 'true'
+
+      - name: データ用リポジトリ（非公開）を取得
+        if: steps.cfg.outputs.ok == 'true'
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ vars.DATA_REPO }}
+          token: ${{ secrets.DATA_REPO_TOKEN }}
+          path: _data_repo
+
+      - uses: actions/setup-python@v5
+        if: steps.cfg.outputs.ok == 'true'
+        with:
+          python-version: "3.12"
+
+      - name: 補充（保存先は _data_repo/data のみ）
+        if: steps.cfg.outputs.ok == 'true'
+        env:
+          DATE_FROM: ${{ inputs.date_from }}
+        run: python netkeirin_backfill.py --out-dir _data_repo/data --from "${DATE_FROM:-20260701}" --budget-min 105
+
+      - name: データ用リポジトリにコミット
+        if: always() && steps.cfg.outputs.ok == 'true'
+        working-directory: _data_repo
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data
+          if git diff --cached --quiet; then echo "変更なし"; exit 0; fi
+          echo "変更ファイル数: $(git diff --cached --name-only | wc -l)"
+          git commit -q -m "data: netkeirin 過去分の補充 $(date -u -d '+9 hours' +%Y-%m-%d)"
+          for i in 1 2 3 4; do git pull -q --rebase && git push -q && break; sleep $((i * 5)); done
