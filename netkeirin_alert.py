@@ -94,7 +94,7 @@ class Alerter:
             return []
         new = []
         for s in self.strategies:
-            for t in self.L.select(s, res['tickets']):
+            for t in self.L.select(s, res['tickets'], res):
                 k = (nk, t['type'], t['key'])
                 if k in self.sent_keys:
                     continue

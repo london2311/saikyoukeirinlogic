@@ -104,6 +104,14 @@ def rider_notes(cards, res):
                 tl, tb = _f(r.get('term')), _f(b.get('term')) if b else None
                 if b and tl and tb and tb < tl:
                     out.append(f'後ろ（{L[1]}番）が先輩 → 引っ張る責任があり、逃げる意欲が高い')
+        ga = res.get('girls_adj') or {}
+        if ga:
+            if c == ga.get('fav'):
+                out.append('ガールズの1番人気 → 後ろを狙う選手が多い（2着の相手は得点下位まで広く）')
+            elif c in ga.get('up', []):
+                out.append('ガールズ: 1番人気が勝つ時、得点下位の選手が後ろから2着に来やすい（過去の検証で約1.25倍。補正済み）')
+            elif c in ga.get('down', []):
+                out.append('ガールズの逃げ型: 1番人気が勝つ時の2着には残りにくい（約0.6倍。補正済み）')
         w = win.get(c)
         if w and w.get('win_market') is not None:
             d = w['win'] - w['win_market']

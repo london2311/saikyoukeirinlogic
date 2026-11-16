@@ -76,9 +76,11 @@ def load_day(data: Path, date: str):
     return snaps, cards, pay, venue, settled
 
 
-def select(strategy, tickets):
-    """買い方の条件に合う買い目（tickets は E.analyze の tickets）"""
+def select(strategy, tickets, res=None):
+    """買い方の条件に合う買い目（tickets は E.analyze の tickets）。"girls": true の買い方はガールズのレースだけ"""
     s = strategy
+    if s.get('girls') and not (res or {}).get('girls'):
+        return []
     sig = s.get('signal', 'EV_f')
     if sig == 'top':  # その券種で当たる確率が最も高い1点（的中率重視）
         cand = [t for t in tickets if t['type'] == s['bet_type'] and t['prob'] >= s.get('p_min', 0.0)
@@ -115,7 +117,7 @@ def evaluate_day(model, strategies, data: Path, date: str):
             for s in strategies:
                 if date < s['registered'] or snap not in s.get('snaps', ['C-2']):
                     continue
-                for t in select(s, res['tickets']):
+                for t in select(s, res['tickets'], res):
                     rows.append(dict(date=date, race_id=rid, venue=venue.get(rid, ''), snap=snap, strategy=s['id'],
                                      bet_type=t['type'], key=t['key'], prob=round(t['prob'], 5),
                                      prob_market=round(t['prob_market'] or 0, 5), odds=t['odds'], ev=round(t['ev'], 4),
