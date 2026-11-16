@@ -54,6 +54,8 @@ jobs:
           python analysis/odds_drift.py --data _data_repo/data --out _data_repo/data/ledger/drift.json
           # 期待値ボードの［賭けた］記録を、確定した払戻で精算（data/bets/settled.json）
           python analysis/settle_bets.py --data _data_repo/data
+          # 毎朝の検証レポートと異常の自動チェック（期待値ボードの 📊 に出す）
+          python analysis/daily_report.py --data _data_repo/data
       - name: データ用リポジトリにコミット
         if: steps.cfg.outputs.ok == 'true'
         working-directory: _data_repo

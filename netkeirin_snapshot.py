@@ -133,9 +133,15 @@ def make_site(a, date, alerter):
             drift = json.load(open(a.drift, encoding='utf-8')).get('table', {})
         except ValueError:
             drift = {}
-    print(f'期待値ボード: 作成します（締切後の下落の学習: {"あり" if drift else "なし"}）')
+    report = None
+    if a.report and os.path.exists(a.report):
+        try:
+            report = json.load(open(a.report, encoding='utf-8'))
+        except ValueError:
+            report = None
+    print(f'期待値ボード: 作成します（締切後の下落の学習: {"あり" if drift else "なし"}・検証レポート: {"あり" if report else "なし"}）')
     return S.SiteBuilder(model, pw, a.site_dir, date, cards_cache=cache, cards_fn=fetch_cards, push_fn=S.git_push_fn(),
-                         strategies=strategies, drift=drift)
+                         strategies=strategies, drift=drift, report=report)
 
 
 def main(argv=None, clock=None, sleep=time.sleep):
@@ -152,6 +158,7 @@ def main(argv=None, clock=None, sleep=time.sleep):
     ap.add_argument('--site', action='store_true', help='期待値ボード（暗号化）のデータを作って site-data ブランチに置く（netkeirin_site.py）')
     ap.add_argument('--site-dir', default='_site_out', help='期待値ボードのデータの作業フォルダ（公開側には入れない）')
     ap.add_argument('--drift', default='', help='締切後のオッズ下落の学習結果（analysis/odds_drift.py の出力 JSON）')
+    ap.add_argument('--report', default='', help='毎朝の検証レポート（analysis/daily_report.py の出力 JSON）')
     a = ap.parse_args(argv)
     clock = clock or (lambda: datetime.now(N.JST))
 

@@ -80,6 +80,14 @@ def main():
     except Exception:  # noqa: BLE001
         check(True, '違うパスワードでは読めない')
 
+    # 毎朝の検証レポート: 全体は report.enc、一覧には要約
+    rep = dict(generated='2099-12-31 07:55', last='20991230', yesterday=dict(sum=dict(n=5, hits=1, roi=1.4)), alerts=['x'])
+    sbr = S.SiteBuilder(E.load_model(), PW, tempfile.mkdtemp(), '20991231', cards_fn=lambda nk: cards, report=rep)
+    sbr.flush()
+    check(S.decrypt(sbr.key, open(os.path.join(sbr.out, 'report.enc'), 'rb').read()) == rep and
+          S.decrypt(sbr.key, open(os.path.join(sbr.out, 'index.enc'), 'rb').read())['report'] ==
+          dict(generated='2099-12-31 07:55', last='20991230', n=5, hits=1, roi=1.4, alerts=1), '検証レポートを暗号化して載せ、一覧に要約')
+
     # 同じ日の続き（次の時間帯）は前の分を引き継ぎ、日が変われば作り直す
     sb2 = S.SiteBuilder(E.load_model(), PW, out, '20991231', cards_fn=lambda nk: cards)
     check('052320991231' in sb2.index['races'], '同じ日の続きは一覧を引き継ぐ')

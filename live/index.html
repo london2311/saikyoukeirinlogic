@@ -84,6 +84,9 @@ h2 { font-size: 15px; margin: 16px 0 6px; }
 .login { max-width: 360px; margin: 18vh auto 0; }
 .login input[type=password] { width: 100%; font-size: 16px; padding: 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--card); color: var(--ink); }
 .login button { margin-top: 10px; width: 100%; font-size: 16px; padding: 10px; border: none; border-radius: 8px; background: linear-gradient(120deg, #2f5bea, #7b4fc4); color: #fff; cursor: pointer; font-weight: 700; }
+.bad { color: var(--bad); font-weight: 700; }
+.rep td, .rep th { white-space: nowrap; }
+.rep td.wrap { white-space: normal; min-width: 11em; }
 .err { color: var(--bad); font-size: 13px; margin-top: 8px; min-height: 1em; }
 .note { font-size: 12px; color: var(--sub); margin-top: 14px; }
 .riders { display: flex; flex-wrap: wrap; gap: 6px 10px; font-size: 13px; color: var(--sub); margin-top: 6px; }
@@ -323,7 +326,9 @@ h2 { font-size: 15px; margin: 16px 0 6px; }
           `<input type="number" min="100" step="100" value="${stakeOf()}" data-stake="${esc(r.race + r.bt + r.key)}" style="width:80px;padding:6px;border:1px solid var(--line);border-radius:8px;background:var(--card);color:var(--ink)"> 円
            <button class="betbtn" data-bet="${esc(JSON.stringify(r))}">賭けた</button>`}</div></div>`;
     }).join('');
-    return `<div class="card hero" style="border:2px solid #2f5bea"><h2>🎯 今の推奨（1点・${yen(stakeOf())}）<span class="muted" style="font-weight:normal">全場・締切の早い順・確定予想の期待値 ${(st.bank ? st.bank.set.evRec : DEF_SET.evRec).toFixed(2)} 以上</span></h2>
+    const R0 = st.index.report;
+    const repLine = R0 && R0.last ? `<div class="mini toreport" style="cursor:pointer">📊 ${esc(String(R0.last).slice(4, 6))}/${esc(String(R0.last).slice(6))} の推奨 ${R0.n}点・的中 ${R0.hits}・回収率 ${R0.roi == null ? '-' : (R0.roi * 100).toFixed(0) + '%'}${R0.alerts ? ` <span class="pill warn">⚠ ${R0.alerts}件</span>` : ' <span class="pill good">異常なし</span>'}</div>` : '';
+    return `<div class="card hero" style="border:2px solid #2f5bea">${repLine}<h2>🎯 今の推奨（1点・${yen(stakeOf())}）<span class="muted" style="font-weight:normal">全場・締切の早い順・確定予想の期待値 ${(st.bank ? st.bank.set.evRec : DEF_SET.evRec).toFixed(2)} 以上</span></h2>
       ${bankLine}${cards || '<div class="skip" style="margin-top:8px">⏸ 今は推奨がありません（見送り）。締切15分前から順に更新されます。</div>'}</div>`;
   }
   function bindBoard() {
@@ -393,6 +398,49 @@ h2 { font-size: 15px; margin: 16px 0 6px; }
     document.getElementById('forget').onclick = () => { if (confirm('この端末に保存したトークンを消しますか？')) { store.del('kb_tok'); st.tok = null; st.bank = null; render(); } };
   }
 
+
+  // ================================================================ 毎朝の検証レポート（analysis/daily_report.py）
+  const pc = (v) => v == null ? '-' : (v * 100).toFixed(1) + '%';
+  function sumCells(s) { return `<td>${s.n}</td><td>${s.hits}</td><td><b>${pc(s.roi)}</b></td><td class="muted">${s.n ? pc(s.lo) + '〜' + pc(s.hi) : '-'}</td><td>${s.n ? (s.ret - s.stake >= 0 ? '+' : '') + yen(s.ret - s.stake) : '-'}</td>`; }
+  async function reportView() {
+    const head = `<header><h1><button class="back" id="back">← 掲示板</button><span>📊 毎日の検証</span></h1></header>`;
+    if (!st.report) {
+      app.innerHTML = head + '<main><div class="card muted">読み込み中…</div></main>'; bindBack();
+      try { st.report = await getEnc('report.enc'); } catch (e) { st.report = { missing: true }; }
+      return render();
+    }
+    const R = st.report;
+    if (R.missing) { app.innerHTML = head + '<main><div class="card muted">まだレポートがありません。毎朝 7:53 の集計のあと、8時15分ごろから表示されます。</div></main>'; return bindBack(); }
+    const y = R.yesterday || {}, ys = y.sum || {};
+    const alerts = (R.alerts || []).map((a) => `<li>${esc(a)}</li>`).join('');
+    const notes = (R.notes || []).map((a) => `<li>${esc(a)}</li>`).join('');
+    const yrows = (y.rows || []).map(([v, rn, bt, k, od, ev, pay]) => `<tr><td>${esc(v)}${rn}R</td><td>${tbadge(bt)} ${combo(bt, k)}</td><td>${x1(od)}倍</td><td>${ev.toFixed(2)}</td><td>${pay > 0 ? `<span class="pill good">的中 ${yen(pay)}</span>` : '<span class="pill off">外れ</span>'}</td></tr>`).join('');
+    const srows = (R.strategies || []).filter((s) => s.all.n || s.id === 'REC').map((s) => `<tr><td class="wrap"><b>${esc(s.id)}</b><div class="muted" style="font-size:12px">${esc(s.label)}</div></td>${sumCells(s.all)}<td>${pc(s.week.roi)}<div class="muted">${s.week.n}点</div></td></tr>`).join('');
+    const m = R.mine || {}, rec = (R.strategies || []).find((s) => s.id === 'REC') || { all: {}, week: {} };
+    const cal = Object.entries((R.calib || {}).all || {}).map(([k, [n, ep, hit, z]]) => `<tr><td>${esc(k.replace('|', ' '))}</td><td>${n.toLocaleString()}</td><td>${ep}</td><td>${hit}</td><td class="${Math.abs(z) >= 3 ? 'bad' : ''}">${z >= 0 ? '+' : ''}${z.toFixed(1)}</td></tr>`).join('');
+    const ll = (R.ll || {}).all || {};
+    app.innerHTML = head + `<main>
+      <div class="card" style="border:2px solid ${alerts ? 'var(--bad)' : 'var(--good)'}"><h2 style="margin-top:0">${alerts ? '⚠ 確認が必要なこと' : '✅ 異常なし'}</h2>
+        ${alerts ? `<ul>${alerts}</ul>` : '<div class="muted">予想の確率・記録・精算に、運では説明できないずれはありません。ロジックはこのまま。</div>'}
+        ${notes ? `<ul class="muted">${notes}</ul>` : ''}<p class="note">${esc(R.rule || '')}</p><div class="muted">作成 ${esc(R.generated || '')}・${R.days}日分（${esc(R.first || '')}〜${esc(R.last || '')}）</div></div>
+      <div class="card"><h2 style="margin-top:0">${esc(String(y.date || '').slice(4, 6))}/${esc(String(y.date || '').slice(6))} の推奨（締切2分前の判定）</h2>
+        <div class="mini"><span class="pill">判定 ${y.races || 0}レース</span><span class="pill">推奨 ${ys.n || 0}点</span><span class="pill good">的中 ${ys.hits || 0}</span><span class="pill done">回収率 ${pc(ys.roi)}</span></div>
+        <div class="scroll"><table class="rep"><tr><th>レース</th><th>買い目</th><th>オッズ</th><th>EV</th><th>結果</th></tr>${yrows || '<tr><td colspan="5" class="muted">推奨はありませんでした（見送り）</td></tr>'}</table></div></div>
+      <div class="card"><h2 style="margin-top:0">推奨を全部買った場合 と 実際に賭けた分</h2>
+        <div class="scroll"><table class="rep"><tr><th></th><th>点数</th><th>的中</th><th>回収率</th><th>90%区間</th><th>収支</th></tr>
+          <tr><td>推奨を全部・累計</td>${sumCells(rec.all)}</tr><tr><td>賭けた分・累計</td>${sumCells(m.all || {})}</tr>
+          <tr><td>推奨を全部・7日</td>${sumCells(rec.week)}</tr><tr><td>賭けた分・7日</td>${sumCells(m.week || {})}</tr></table></div>
+        <div class="muted">推奨にない買い目の記録: ${m.off_recs || 0}点</div></div>
+      <div class="card"><h2 style="margin-top:0">事前登録した買い方（締切2分前・1点100円）</h2>
+        <div class="scroll"><table class="rep"><tr><th>買い方</th><th>点数</th><th>的中</th><th>回収率</th><th>90%区間</th><th>収支</th><th>直近7日</th></tr>${srows}</table></div>
+        <p class="note">点数が数百になるまでは運で大きく上下します。90%区間の下限が100%を超えて初めて「勝てる」と言えます。</p></div>
+      <div class="card"><h2 style="margin-top:0">予想の確率の当たり方（累計）</h2>
+        <div class="scroll"><table class="rep"><tr><th>券種・期待値の帯</th><th>組数</th><th>予想の的中</th><th>実際</th><th>z</th></tr>${cal || '<tr><td colspan="5" class="muted">まだデータがありません</td></tr>'}</table></div>
+        <div class="muted">z が ±3 を超えたら、運ではなく予想のずれ（⚠ に出ます）。2車複の的中組の当たり方 オッズとの差: ${ll.diff == null ? '-' : (ll.diff > 0 ? '+' : '') + ll.diff}（z=${ll.z == null ? '-' : ll.z}、${ll.n || 0}R。マイナスほどオッズより良い）</div></div>
+    </main>`;
+    bindBack();
+  }
+
   // ---- ログイン
   function loginView(msg) {
     app.innerHTML = `<div class="login card"><h1 style="font-size:18px;margin:0 0 8px">期待値ボード</h1>
@@ -447,6 +495,7 @@ h2 { font-size: 15px; margin: 16px 0 6px; }
   }
   function render() {
     if (st.page === 'bank') return bankView();
+    if (st.page === 'report') return reportView();
     if (st.race) return renderRace();
     const races = Object.entries(st.index.races || {}).map(([id, r]) => ({ id, ...r }));
     const venues = [...new Set(races.map((r) => r.venue))];
@@ -455,7 +504,7 @@ h2 { font-size: 15px; margin: 16px 0 6px; }
       st.venue = next ? next.venue : venues[0];
     }
     const list = races.filter((r) => r.venue === st.venue).sort((a, b) => a.rn - b.rn);
-    app.innerHTML = `<header><h1>期待値ボード <span class="upd">${esc(st.index.date)} 更新 ${esc((st.index.updated || '').slice(11, 16))} <button class="back" id="tobank" style="margin-left:8px">💰資金管理</button></span></h1>
+    app.innerHTML = `<header><h1>期待値ボード <span class="upd">${esc(st.index.date)} 更新 ${esc((st.index.updated || '').slice(11, 16))} <button class="back" id="toreport" style="margin-left:8px">📊検証${st.index.report && st.index.report.alerts ? ' ⚠' : ''}</button><button class="back" id="tobank" style="margin-left:6px">💰資金管理</button></span></h1>
       <div class="tabs">${venues.map((v) => `<button class="tab ${v === st.venue ? 'on' : ''}" data-v="${esc(v)}">${esc(v)}${races.some((r) => r.venue === v && recCount(r) && (minutesTo(r.deadline || r.start) ?? -1) > 0) ? '<span class="dot"></span>' : ''}</button>`).join('')}</div></header>
       <main>${dayBanner()}${boardHtml()}<h2 style="margin-top:18px">🏟 ${esc(st.venue || '')} のレース</h2>${evControl()}${list.map(raceCard).join('') || '<p class="muted">この場のレースはまだありません。</p>'}
       <div class="card legend">${evb(1.35)}${evb(1.15)}${evb(1.03)}<span>EV＝当たる確率×今のオッズ。1.10以上が買いの目安</span></div>
@@ -466,6 +515,7 @@ h2 { font-size: 15px; margin: 16px 0 6px; }
     app.querySelectorAll('.race').forEach((c) => c.onclick = () => openRace(c.dataset.id));
     bindBoard();
     const tb = document.getElementById('tobank'); if (tb) tb.onclick = () => { st.page = 'bank'; render(); window.scrollTo(0, 0); };
+    app.querySelectorAll('#toreport, .toreport').forEach((x) => x.onclick = () => { st.page = 'report'; st.report = null; render(); window.scrollTo(0, 0); });
   }
   function recCount(r) {
     if (!r.best) return 0;

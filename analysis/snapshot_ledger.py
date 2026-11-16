@@ -26,7 +26,11 @@ ROOT = os.path.dirname(HERE)
 sys.path.insert(0, ROOT)
 sys.path.insert(0, HERE)
 import keirin_engine as E  # noqa: E402
+import odds_drift as DR  # noqa: E402
 import train_model as T  # noqa: E402
+
+CALIB_TYPES = ('2車複', 'ワイド')
+EV_BANDS = ((1.1, 'EV1.10以上'), (1.0, 'EV1.00-1.10'), (0.0, 'EV1.00未満'))
 
 LEDGER_FIELDS = ['date', 'race_id', 'venue', 'snap', 'strategy', 'bet_type', 'key', 'prob', 'prob_market', 'odds', 'ev',
                  'stake', 'payoff', 'model']
@@ -89,10 +93,16 @@ def select(strategy, tickets, res=None):
         best = max(allt, key=lambda t: t['prob']) if allt else None
         return [dict(best, val=best['prob'])] if best is not None and best in cand else []
     out = []
+    types = s.get('bet_types') or [s['bet_type']]
+    res = res or {}
     for t in tickets:
-        if t['type'] != s['bet_type']:
+        if t['type'] not in types:
             continue
-        val = t['ev'] if sig == 'EV_f' else ((t['prob_market'] or 0) * t['odds'])
+        if sig == 'EV_d':  # 期待値ボードと同じ: 締切後の下落を見込んだ確定予想オッズ（0.1倍単位）× 確率
+            of = round(t['odds'] * DR.ratio(res.get('_drift') or {}, t['type'], res.get('_snap', 'C-2'), t['odds'], t['ev']), 1)
+            val = t['prob'] * of
+        else:
+            val = t['ev'] if sig == 'EV_f' else ((t['prob_market'] or 0) * t['odds'])
         if val < s.get('min', 1.10) or t['prob'] < s.get('p_min', 0.0):
             continue
         if not (s.get('odds_min', 1.0) <= t['odds'] < s.get('odds_max', 1e9)):
@@ -104,7 +114,27 @@ def select(strategy, tickets, res=None):
     return out
 
 
-def evaluate_day(model, strategies, data: Path, date: str):
+def add_calib(calib, res, pay):
+    """締切2分前の確率の当たり方（2車複・ワイドの全組を期待値の帯ごとに）と、2車複の的中組に付けた確率（融合 vs 市場）"""
+    for t in res['tickets']:
+        if t['type'] not in CALIB_TYPES or not t['prob']:
+            continue
+        band = next(lab for lo, lab in EV_BANDS if t['ev'] >= lo)
+        c = calib['bands'].setdefault(f"{t['type']}|{band}", [0, 0.0, 0, 0.0])
+        hit = 1 if pay.get((t['type'], t['key']), 0) > 0 else 0
+        c[0] += 1
+        c[1] += t['prob']
+        c[2] += hit
+        c[3] += t['prob'] * (1 - t['prob'])
+    win = [t for t in res['tickets'] if t['type'] == '2車複' and pay.get(('2車複', t['key']), 0) > 0]
+    if win and win[0]['prob'] and win[0]['prob_market']:
+        import math
+        calib['ll'].append([round(-math.log(win[0]['prob']), 5), round(-math.log(win[0]['prob_market']), 5)])
+
+
+def evaluate_day(model, strategies, data: Path, date: str, drift=None, calib=None):
+    drift = drift or {}
+    calib = calib if calib is not None else dict(bands={}, ll=[])
     snaps, cards, pay, venue, settled = load_day(data, date)
     rows = []
     for rid in sorted(snaps):
@@ -114,6 +144,9 @@ def evaluate_day(model, strategies, data: Path, date: str):
             res = E.analyze(model, cards[rid], orows, venue.get(rid, ''), {})
             if not res.get('ok') or not res.get('market_ok'):
                 continue
+            res['_snap'], res['_drift'] = snap, drift
+            if snap == 'C-2':
+                add_calib(calib, res, pay[rid])
             for s in strategies:
                 if date < s['registered'] or snap not in s.get('snaps', ['C-2']):
                     continue
@@ -179,25 +212,30 @@ def main(argv=None):
     model = E.load_model()
     out_dir = data / 'ledger'
     out_dir.mkdir(parents=True, exist_ok=True)
-    ledger_path, meta_path = out_dir / 'ledger.csv', out_dir / 'days.json'
+    ledger_path, meta_path, calib_path = out_dir / 'ledger.csv', out_dir / 'days.json', out_dir / 'calib.json'
+    drift = DR.load_table(str(out_dir / 'drift.json'))
     ledger = [] if a.redo or not ledger_path.exists() else read_csv(ledger_path)
     days = {} if a.redo or not meta_path.exists() else json.loads(meta_path.read_text(encoding='utf-8'))
+    calib_all = {} if a.redo or not calib_path.exists() else json.loads(calib_path.read_text(encoding='utf-8'))
     for p in sorted(glob.glob(str(data / '*' / 'odds_snap' / 'snap_*.csv'))):
         date = Path(p).stem.split('_')[1]
         if date in days:
             continue
-        rows, n_races = evaluate_day(model, strategies, data, date)
+        calib = dict(bands={}, ll=[])
+        rows, n_races = evaluate_day(model, strategies, data, date, drift, calib)
         if n_races == 0:
             print(f'{date}: 結果がまだ無いため保留')
             continue
         ledger.extend(rows)
         days[date] = n_races
+        calib_all[date] = calib
         print(f'{date}: 判定 {n_races}レース / 買い目 {len(rows)}点')
     with open(ledger_path, 'w', newline='', encoding='utf-8') as f:
         w = csv.DictWriter(f, fieldnames=LEDGER_FIELDS)
         w.writeheader()
         w.writerows(ledger)
     meta_path.write_text(json.dumps(days, indent=1, sort_keys=True), encoding='utf-8')
+    calib_path.write_text(json.dumps(calib_all, sort_keys=True), encoding='utf-8')
     (out_dir / 'report.md').write_text(report(ledger, strategies, days), encoding='utf-8')
     print(f'台帳 {len(ledger)}点 / {len(days)}日')
 

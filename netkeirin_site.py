@@ -54,7 +54,7 @@ def buy_line(p, ev_min=1.10):
 
 
 class SiteBuilder:
-    def __init__(self, model, password, out_dir, date, cards_cache=None, cards_fn=None, push_fn=None, strategies=None, drift=None):
+    def __init__(self, model, password, out_dir, date, cards_cache=None, cards_fn=None, push_fn=None, strategies=None, drift=None, report=None):
         self.drift = drift or {}
         self.model = model
         self.out = Path(out_dir)
@@ -80,6 +80,15 @@ class SiteBuilder:
         self.key = derive_key(password, base64.b64decode(meta['salt']))
         self.index = self._load('index.enc') or dict(date=date, races={})
         self.dirty = False
+        # 毎朝の検証レポート（analysis/daily_report.py）。一覧には要約だけ、全体は report.enc
+        if report:
+            self._save('report.enc', report)
+            y = (report.get('yesterday') or {}).get('sum') or {}
+            summ = dict(generated=report.get('generated'), last=report.get('last'), n=y.get('n', 0), hits=y.get('hits', 0),
+                        roi=y.get('roi'), alerts=len(report.get('alerts') or []))
+            if self.index.get('report') != summ:
+                self.index['report'] = summ
+                self.dirty = True
         self.stats = dict(updates=0, pushes=0, push_failed=0)
 
     def _load(self, name):
