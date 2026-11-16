@@ -71,6 +71,9 @@ def main():
     idx = S.decrypt(key, open(os.path.join(out, 'index.enc'), 'rb').read())
     check(set(idx['races']) == {'052320991231', '062320991231'} and idx['races']['052320991231']['snaps'] == ['C-15', 'C-10', 'C-5'] and idx['races']['052320991231']['deadline'] == '14:55',
           '一覧に今日の全レースと記録済みの時点')
+    rec = idx['races']['052320991231'].get('recs', {})
+    check(rec.get('snap') == 'C-5' and rec['rows'] and all(r[5] >= 1.0 for r in rec['rows']) and rec['rows'][0][:2] == ['2車複', '1-2'],
+          f'一覧に1点買いの推奨（検証済みの券種・確定予想の期待値1.0以上） {rec.get("rows", [])[:1]}')
     try:
         S.decrypt(S.derive_key('wrong password!!', base64.b64decode(meta['salt'])), raw)
         check(False, '違うパスワードでは読めない')

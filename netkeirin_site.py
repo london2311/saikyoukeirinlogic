@@ -197,6 +197,14 @@ class SiteBuilder:
                 best.append([bt, rows[0][0], rows[0][2], rows[0][6], rows[0][5]])
         grp = sum(1 for bt, v in groups.items() for g in v.get('ev', []) if max(g[4], g[11] if len(g) > 11 else 0) >= 1.10)
         ent['best'] = dict(snap=snap, rows=best, strat=len(strat), grp=grp)
+        # 1点買いの推奨候補（メイン掲示板用）: 2車複・ワイドで確定予想の期待値 1.0 以上（表示の基準は画面で決める）
+        recs = []
+        for bt in sorted(VALIDATED):
+            for x in types.get(bt, []):
+                if x[6] >= 1.0 and x[1] >= 0.005 and x[2] <= 300:
+                    recs.append([bt, x[0], x[1], x[2], x[5], x[6], x[4]] + ([x[7]] if len(x) > 7 else []))
+        recs.sort(key=lambda r: -r[5])
+        ent['recs'] = dict(snap=snap, at=f'{now:%H:%M:%S}', rows=recs[:6])
         self.index['updated'] = f'{now:%Y-%m-%d %H:%M:%S}'
         self.dirty = True
         self.stats['updates'] += 1

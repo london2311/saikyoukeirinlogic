@@ -95,6 +95,9 @@ h2 { font-size: 15px; margin: 16px 0 6px; }
 .grp.a { border: 2px solid #12a150; }
 .grp.s { border: 2px solid #ff9f43; background: linear-gradient(135deg, rgba(255,215,106,.2), transparent), var(--card); }
 .cut { margin-top: 6px; padding: 6px 8px; border-left: 4px solid #12a150; background: var(--good-soft); border-radius: 8px; font-size: 14px; }
+.betbtn { border: none; border-radius: 10px; padding: 8px 16px; font-size: 15px; font-weight: 800; color: #fff; cursor: pointer;
+  background: linear-gradient(120deg, #12a150, #0e8a4f); box-shadow: 0 2px 6px rgba(18,161,80,.35); }
+.betbtn:disabled { opacity: .6; }
 .legend { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; font-size: 12px; color: var(--sub); }
 </style>
 </head>
@@ -114,7 +117,7 @@ h2 { font-size: 15px; margin: 16px 0 6px; }
   const VALIDATED = new Set(['2車複', 'ワイド']);
   const app = document.getElementById('app');
   const EV_OPTIONS = [['0.8', 0.8], ['0.9', 0.9], ['1.0', 1.0], ['1.1', 1.1], ['全部', 0]];
-  const st = { evMin: 0.9, view: null, key: null, meta: null, sha: null, index: null, venue: null, race: null, raceData: null, snap: null, showAll: {}, timer: null };
+  const st = { page: 'board', bank: null, tok: null, evMin: 0.9, view: null, key: null, meta: null, sha: null, index: null, venue: null, race: null, raceData: null, snap: null, showAll: {}, timer: null };
 
   const store = {
     get(k) { try { return localStorage.getItem(k); } catch (e) { return null; } },
@@ -170,6 +173,226 @@ h2 { font-size: 15px; margin: 16px 0 6px; }
     if (st.race) { try { st.raceData = await getEnc(st.race + '.enc'); } catch (e) { /* まだ記録なし */ } }
   }
 
+
+  // ================================================================ 資金管理（賭けた記録は非公開の datebase に保存）
+  const DATA_REPO = 'datebase';
+  const DEF_SET = { initial: 30000, stake: 100, evRec: 1.10, dayLoss: 3000, raceMax: 500 };
+  const todayJST = () => new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Tokyo' }));
+  const ymd = (d) => `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}`;
+  // トークンは、サイトのパスワードから作った鍵で暗号化して端末に保存する
+  async function tokKey() {
+    const base = await crypto.subtle.importKey('raw', new TextEncoder().encode(st.pw || ''), 'PBKDF2', false, ['deriveKey']);
+    return crypto.subtle.deriveKey({ name: 'PBKDF2', salt: new TextEncoder().encode('kb-token-v1'), iterations: 100000, hash: 'SHA-256' },
+      base, { name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt']);
+  }
+  async function saveTok(t) {
+    const iv = crypto.getRandomValues(new Uint8Array(12));
+    const c = new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, await tokKey(), new TextEncoder().encode(t)));
+    store.set('kb_tok', btoa(String.fromCharCode(...iv, ...c)));
+    st.tok = t;
+  }
+  async function loadTok() {
+    const v = store.get('kb_tok');
+    if (!v) return null;
+    try {
+      const u = b64(v);
+      st.tok = new TextDecoder().decode(await crypto.subtle.decrypt({ name: 'AES-GCM', iv: u.slice(0, 12) }, await tokKey(), u.slice(12)));
+    } catch (e) { st.tok = null; }
+    return st.tok;
+  }
+  async function gh(path, opt = {}) {
+    const r = await fetch(`https://api.github.com/repos/${OWNER}/${DATA_REPO}/contents/${path}`, { cache: 'no-store', ...opt,
+      headers: { Authorization: `Bearer ${st.tok}`, Accept: 'application/vnd.github+json', ...(opt.headers || {}) } });
+    return r;
+  }
+  const dec64 = (b) => new TextDecoder().decode(Uint8Array.from(atob(b.replace(/\n/g, '')), (c) => c.charCodeAt(0)));
+  const enc64 = (t) => { const u = new TextEncoder().encode(t); let s = ''; for (const x of u) s += String.fromCharCode(x); return btoa(s); };
+  async function getJson(path, dflt) {
+    const r = await gh(path);
+    if (r.status === 404) return { data: dflt, sha: null };
+    if (!r.ok) throw new Error(`記録の読み込みに失敗（${r.status}）`);
+    const j = await r.json();
+    return { data: JSON.parse(dec64(j.content)), sha: j.sha };
+  }
+  async function putJson(path, data, sha, msg) {
+    const r = await gh(path, { method: 'PUT', body: JSON.stringify({ message: msg, content: enc64(JSON.stringify(data, null, 1)), ...(sha ? { sha } : {}) }) });
+    if (!r.ok) { const e = new Error(`記録の保存に失敗（${r.status}）`); e.status = r.status; throw e; }
+    return (await r.json()).content.sha;
+  }
+  async function loadBank() {
+    if (!st.tok) return;
+    const ls = await gh('data/bets');
+    const files = ls.ok ? (await ls.json()).map((f) => f.name).filter((n) => /^bets_\d{6}\.json$/.test(n)) : [];
+    const bets = [];
+    for (const f of files) { const { data } = await getJson('data/bets/' + f, []); bets.push(...data); }
+    const settled = (await getJson('data/bets/settled.json', {})).data;
+    const set = (await getJson('data/bets/settings.json', DEF_SET)).data;
+    st.bank = { bets, settled, set: { ...DEF_SET, ...set }, at: Date.now() };
+  }
+  async function mutateMonth(ym, fn) {
+    const path = `data/bets/bets_${ym}.json`;
+    for (let i = 0; i < 3; i++) {
+      const { data, sha } = await getJson(path, []);
+      const next = fn(data);
+      try { await putJson(path, next, sha, '賭けの記録'); return next; } catch (e) { if (e.status !== 409 && e.status !== 422) throw e; }
+    }
+    throw new Error('保存が混み合っています。もう一度押してください');
+  }
+  function stats(b) {
+    const live = b.bets.filter((x) => !x.deleted).sort((a, c) => a.placed_at.localeCompare(c.placed_at));
+    let staked = 0, paid = 0, sStake = 0, hits = 0, n = 0, streak = 0, worst = 0, bal = b.set.initial, peak = bal, dd = 0;
+    const curve = [bal];
+    for (const x of live) {
+      staked += x.stake; bal -= x.stake;
+      const r = b.settled[x.id];
+      if (r) {
+        paid += r.payout; bal += r.payout;
+        if (r.result !== 'void') { sStake += x.stake; n++; if (r.result === 'hit') { hits++; streak = 0; } else { streak++; worst = Math.max(worst, streak); } }
+        else sStake += 0;
+      }
+      peak = Math.max(peak, bal); dd = Math.max(dd, peak - bal); curve.push(bal);
+    }
+    const settledPaid = live.reduce((a, x) => a + ((b.settled[x.id] && b.settled[x.id].result !== 'void') ? b.settled[x.id].payout : 0), 0);
+    const pending = live.filter((x) => !b.settled[x.id]);
+    const today = ymd(todayJST());
+    const t = live.filter((x) => x.date === today);
+    const tStake = t.reduce((a, x) => a + x.stake, 0);
+    const tPaid = t.reduce((a, x) => a + (b.settled[x.id] ? b.settled[x.id].payout : 0), 0);
+    return { live, bal, staked, paid, roi: sStake ? settledPaid / sStake : null, hits, n, worst, dd, curve, pending,
+      tStake, tPL: tPaid - tStake, tCount: t.length };
+  }
+  const yen = (v) => (v < 0 ? '−' : '') + Math.abs(Math.round(v)).toLocaleString() + '円';
+  const betOf = (race, bt, k) => st.bank && st.bank.bets.find((x) => !x.deleted && x.race_id === race && x.bt === bt && x.key === k);
+  async function placeBet(rec, stake) {
+    if (!st.tok) { st.page = 'bank'; render(); return; }
+    if (!st.bank) await loadBank();
+    const S = stats(st.bank), set = st.bank.set;
+    const warn = [];
+    if (S.tPL <= -set.dayLoss) warn.push(`今日の損失が上限（${yen(set.dayLoss)}）に達しています`);
+    const raceSum = st.bank.bets.filter((x) => !x.deleted && x.race_id === rec.race).reduce((a, x) => a + x.stake, 0);
+    if (raceSum + stake > set.raceMax) warn.push(`このレースの合計が上限（${yen(set.raceMax)}）を超えます`);
+    if (stake > S.bal) warn.push('残高が足りません');
+    if (warn.length && !confirm(warn.join('\n') + '\n\nそれでも記録しますか？')) return;
+    const now = todayJST();
+    const bet = { id: `${rec.race}_${rec.bt}_${rec.key}_${Date.now()}`, placed_at: `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}T${now.toTimeString().slice(0, 8)}`, date: ymd(now),
+      race_id: rec.race, venue: rec.venue, rn: rec.rn, deadline: rec.deadline, bt: rec.bt, key: rec.key, stake,
+      odds: rec.od, odds_final: rec.of, ev: rec.ev, p: rec.p, snap: rec.snap };
+    await mutateMonth(ymd(now).slice(0, 6), (arr) => [...arr, bet]);
+    st.bank.bets.push(bet);
+    render();
+  }
+  async function cancelBet(id) {
+    const b = st.bank.bets.find((x) => x.id === id);
+    if (!b || st.bank.settled[id]) return;
+    if (!confirm('この記録を取り消しますか？（賭けていなかった場合など）')) return;
+    await mutateMonth(b.date.slice(0, 6), (arr) => arr.map((x) => x.id === id ? { ...x, deleted: true } : x));
+    b.deleted = true; render();
+  }
+  async function saveSettings(set) {
+    const { sha } = await getJson('data/bets/settings.json', DEF_SET);
+    await putJson('data/bets/settings.json', set, sha, '資金管理の設定');
+    st.bank.set = set;
+  }
+  // ---- メイン掲示板: 全場の、これから締切の 1点買い推奨
+  function recList() {
+    const evRec = st.bank ? st.bank.set.evRec : DEF_SET.evRec;
+    const out = [];
+    Object.entries(st.index.races || {}).forEach(([id, r]) => {
+      const m = minutesTo(r.deadline || r.start);
+      if (!r.recs || m == null || m < 0) return;
+      r.recs.rows.forEach(([bt, k, p, od, of, ev, line, omax]) => {
+        if (ev >= evRec) out.push({ race: id, venue: r.venue, rn: r.rn, deadline: r.deadline, start: r.start, m, bt, key: k, p, od, of, ev, line, omax, snap: r.recs.snap, at: r.recs.at });
+      });
+    });
+    return out.sort((a, b) => a.m - b.m || b.ev - a.ev);
+  }
+  function stakeOf() { return st.bank ? st.bank.set.stake : DEF_SET.stake; }
+  function boardHtml() {
+    const recs = recList();
+    const S = st.bank ? stats(st.bank) : null;
+    const bankLine = S ? `<div class="mini"><span class="pill done">残高 ${yen(S.bal)}</span><span class="pill ${S.tPL >= 0 ? 'good' : 'warn'}">今日 ${S.tCount}点・${S.tPL >= 0 ? '+' : ''}${yen(S.tPL)}（精算前を含む）</span>${S.pending.length ? `<span class="pill">結果待ち ${S.pending.length}点</span>` : ''}</div>` :
+      `<div class="mini muted">${st.tok ? '記録を読み込み中…' : '［賭けた］を記録するには、💰資金管理 で初回の設定をしてください'}</div>`;
+    const cards = recs.slice(0, 12).map((r) => {
+      const done = betOf(r.race, r.bt, r.key);
+      return `<div class="rec ${tier(r.ev)}" style="margin:8px 0">
+        <div><b>${esc(r.venue)} ${r.rn}R</b> <span class="${r.m <= 3 ? 'count soon' : 'count'}">締切まで ${r.m}分（${esc(r.deadline || '')}）</span>
+          <div style="margin-top:6px">${tbadge(r.bt)} ${combo(r.bt, r.key, true)}</div></div>
+        <div style="text-align:right">${evb(r.ev)}<div class="buy">今 ${x1(r.od)}${r.omax ? '〜' + x1(r.omax) : ''}倍</div><div class="muted">確定予想 ${x1(r.of)}倍</div></div>
+        <div class="line2">当たる確率 ${pct(r.p)}・<b>${x1(r.line)}倍以上なら買い</b>・${esc(SNAP_LABEL[r.snap] || '')}（${esc(r.at || '')}）のオッズ</div>
+        <div class="line2">${done ? `✅ <b>賭けた ${yen(done.stake)}</b> <button class="more" data-cancel="${esc(done.id)}">取消</button>` :
+          `<input type="number" min="100" step="100" value="${stakeOf()}" data-stake="${esc(r.race + r.bt + r.key)}" style="width:80px;padding:6px;border:1px solid var(--line);border-radius:8px;background:var(--card);color:var(--ink)"> 円
+           <button class="betbtn" data-bet="${esc(JSON.stringify(r))}">賭けた</button>`}</div></div>`;
+    }).join('');
+    return `<div class="card hero" style="border:2px solid #2f5bea"><h2>🎯 今の推奨（1点・${yen(stakeOf())}）<span class="muted" style="font-weight:normal">全場・締切の早い順・確定予想の期待値 ${(st.bank ? st.bank.set.evRec : DEF_SET.evRec).toFixed(2)} 以上</span></h2>
+      ${bankLine}${cards || '<div class="skip" style="margin-top:8px">⏸ 今は推奨がありません（見送り）。締切15分前から順に更新されます。</div>'}</div>`;
+  }
+  function bindBoard() {
+    app.querySelectorAll('.betbtn').forEach((b) => b.onclick = async (e) => {
+      e.stopPropagation();
+      const r = JSON.parse(b.dataset.bet);
+      const inp = app.querySelector(`input[data-stake="${CSS.escape(r.race + r.bt + r.key)}"]`);
+      const v = Math.max(100, Math.round((parseInt(inp && inp.value, 10) || stakeOf()) / 100) * 100);
+      b.disabled = true; b.textContent = '記録中…';
+      try { await placeBet(r, v); } catch (err) { alert(err.message); b.disabled = false; b.textContent = '賭けた'; }
+    });
+    app.querySelectorAll('[data-cancel]').forEach((b) => b.onclick = async (e) => { e.stopPropagation(); try { await cancelBet(b.dataset.cancel); } catch (err) { alert(err.message); } });
+  }
+  // ---- 資金管理の画面
+  function bankView() {
+    const head = `<header><h1><button class="back" id="back">← 掲示板</button><span>💰 資金管理</span></h1></header>`;
+    if (!st.tok) {
+      app.innerHTML = head + `<main><div class="card"><h2 style="margin-top:0">初回の設定（端末ごとに1回）</h2>
+        <p class="muted">賭けた記録は、非公開のリポジトリ <b>${esc(OWNER)}/${DATA_REPO}</b> に保存します。書き込み用のトークンを登録してください。</p>
+        <ol class="muted" style="padding-left:18px">
+          <li>GitHub → Settings → Developer settings → Personal access tokens → <b>Fine-grained tokens</b> → Generate new token</li>
+          <li>Repository access: <b>Only select repositories</b> → <b>${DATA_REPO}</b></li>
+          <li>Permissions → Repository permissions → <b>Contents: Read and write</b></li>
+          <li>作成されたトークン（github_pat_…）を下に貼り付け</li></ol>
+        <input id="tok" type="password" placeholder="github_pat_..." style="width:100%;font-size:16px;padding:10px;border:1px solid var(--line);border-radius:8px;background:var(--card);color:var(--ink)">
+        <button id="savetok" class="betbtn" style="margin-top:10px;width:100%">登録する</button><div class="err" id="err"></div>
+        <p class="note">トークンはサイトのパスワードで暗号化して、この端末にだけ保存します。サイトのパスワードを変えた時は登録し直してください。</p></div></main>`;
+      bindBack();
+      document.getElementById('savetok').onclick = async () => {
+        const t = document.getElementById('tok').value.trim();
+        document.getElementById('err').textContent = '確認中…';
+        st.tok = t;
+        try { await loadBank(); await saveTok(t); render(); } catch (e) { st.tok = null; document.getElementById('err').textContent = 'トークンを確認できません: ' + e.message; }
+      };
+      return;
+    }
+    if (!st.bank) { app.innerHTML = head + '<main><div class="card muted">読み込み中…</div></main>'; bindBack(); loadBank().then(render).catch((e) => alert(e.message)); return; }
+    const b = st.bank, S = stats(b), set = b.set;
+    const w = 340, h = 90, c = S.curve, mn = Math.min(...c), mx = Math.max(...c), sx = (i) => (c.length > 1 ? i * w / (c.length - 1) : 0), sy = (v) => mx === mn ? h / 2 : h - (v - mn) * h / (mx - mn);
+    const path = c.map((v, i) => `${i ? 'L' : 'M'}${sx(i).toFixed(1)},${sy(v).toFixed(1)}`).join('');
+    const kpi = (lab, v, cls = '') => `<div class="card" style="margin:0;padding:10px"><div class="muted">${lab}</div><div style="font-size:20px;font-weight:800" class="${cls}">${v}</div></div>`;
+    const rows = [...S.live].reverse().slice(0, 200).map((x) => { const r = b.settled[x.id];
+      const res = !r ? '<span class="pill">結果待ち</span>' : r.result === 'hit' ? `<span class="pill good">的中 +${yen(r.payout)}</span>` : r.result === 'void' ? '<span class="pill">返還</span>' : '<span class="pill off">外れ</span>';
+      return `<tr><td>${esc(x.date.slice(4, 6))}/${esc(x.date.slice(6))} ${esc(x.venue)}${x.rn}R<div>${tbadge(x.bt)} ${combo(x.bt, x.key)}</div></td><td>${yen(x.stake)}</td><td>${x1(x.odds)}倍<div class="muted">EV ${Number(x.ev).toFixed(2)}</div></td><td>${res}${!r ? ` <button class="more" data-cancel="${esc(x.id)}">取消</button>` : ''}</td></tr>`; }).join('');
+    const warn = S.tPL <= -set.dayLoss ? `<div class="card" style="border:2px solid var(--bad);color:var(--bad);font-weight:700">⚠ 今日の損失が上限（${yen(set.dayLoss)}）に達しました。今日はここまでにしましょう。</div>` : '';
+    app.innerHTML = head + `<main>${warn}
+      <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:8px;margin-top:10px">
+        ${kpi('残高', yen(S.bal))}${kpi('収支（精算済み）', (S.paid - S.staked + S.pending.reduce((a, x) => a + x.stake, 0) >= 0 ? '+' : '') + yen(S.paid - S.staked + S.pending.reduce((a, x) => a + x.stake, 0)))}
+        ${kpi('回収率', S.roi == null ? '-' : (S.roi * 100).toFixed(1) + '%')}${kpi('的中', `${S.hits} / ${S.n}点`)}
+        ${kpi('最大連敗', S.worst + '点')}${kpi('最大の下落幅', yen(S.dd))}
+        ${kpi('今日', `${S.tCount}点・${S.tPL >= 0 ? '+' : ''}${yen(S.tPL)}`)}${kpi('結果待ち', `${S.pending.length}点・${yen(S.pending.reduce((a, x) => a + x.stake, 0))}`)}
+      </div>
+      <div class="card"><div class="muted">残高の推移（賭けた順）</div><svg viewBox="0 0 ${w} ${h}" width="100%" height="${h}" style="margin-top:6px"><path d="${path}" fill="none" stroke="#2f5bea" stroke-width="2"/></svg></div>
+      <div class="card"><h2 style="margin-top:0">設定</h2>
+        ${[['initial', '最初の資金（円）'], ['stake', '1点の金額（円）'], ['evRec', '推奨にする期待値（確定予想）'], ['dayLoss', '1日の損失の上限（円）'], ['raceMax', '1レースの上限（円）']].map(([k, lab]) =>
+          `<label style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin:6px 0"><span>${lab}</span><input data-set="${k}" type="number" step="${k === 'evRec' ? '0.01' : '100'}" value="${set[k]}" style="width:120px;padding:6px;border:1px solid var(--line);border-radius:8px;background:var(--card);color:var(--ink)"></label>`).join('')}
+        <button id="saveset" class="betbtn" style="width:100%">設定を保存</button>
+        <p class="note">記録は ${esc(OWNER)}/${DATA_REPO} の data/bets/ に保存され、毎朝の収集のあと自動で精算されます（的中・外れ・返還）。</p>
+        <button class="more" id="forget">この端末のトークンを消す</button></div>
+      <div class="card"><h2 style="margin-top:0">履歴</h2><div class="scroll"><table><tr><th>レース・買い目</th><th>金額</th><th>オッズ</th><th>結果</th></tr>${rows || '<tr><td colspan="4" class="muted">まだ記録がありません</td></tr>'}</table></div></div></main>`;
+    bindBack(); bindBoard();
+    document.getElementById('saveset').onclick = async () => {
+      const next = { ...set };
+      app.querySelectorAll('[data-set]').forEach((i) => { next[i.dataset.set] = parseFloat(i.value); });
+      try { await saveSettings(next); render(); } catch (e) { alert(e.message); }
+    };
+    document.getElementById('forget').onclick = () => { if (confirm('この端末に保存したトークンを消しますか？')) { store.del('kb_tok'); st.tok = null; st.bank = null; render(); } };
+  }
+
   // ---- ログイン
   function loginView(msg) {
     app.innerHTML = `<div class="login card"><h1 style="font-size:18px;margin:0 0 8px">期待値ボード</h1>
@@ -183,7 +406,7 @@ h2 { font-size: 15px; margin: 16px 0 6px; }
       try {
         st.pw = pw; st.key = null; await load(pw);
         if (document.getElementById('keep').checked) store.set('kb_pw', pw);
-        startRefresh(); render();
+        await afterLogin();
       } catch (e) {
         document.getElementById('err').textContent = (e.name === 'OperationError') ? 'パスワードが違います' : ('読み込めません: ' + e.message);
       }
@@ -192,9 +415,15 @@ h2 { font-size: 15px; margin: 16px 0 6px; }
     document.getElementById('pw').onkeydown = (e) => { if (e.key === 'Enter') go(); };
   }
 
+  async function afterLogin() {
+    startRefresh(); render();
+    if (await loadTok()) { try { await loadBank(); render(); } catch (e) { /* 次回 */ } }
+  }
   function startRefresh() {
     clearInterval(st.timer);
-    st.timer = setInterval(async () => { try { await load(); render(); } catch (e) { /* 次回再試行 */ } }, REFRESH_SEC * 1000);
+    st.timer = setInterval(async () => {
+      try { await load(); if (st.tok && (!st.bank || Date.now() - st.bank.at > 10 * 60 * 1000)) await loadBank(); if (!document.querySelector('input:focus')) render(); } catch (e) { /* 次回再試行 */ }
+    }, REFRESH_SEC * 1000);
   }
 
   // ---- 一覧
@@ -205,6 +434,7 @@ h2 { font-size: 15px; margin: 16px 0 6px; }
     return Math.round((h * 60 + m) - (now.getHours() * 60 + now.getMinutes()));
   }
   function render() {
+    if (st.page === 'bank') return bankView();
     if (st.race) return renderRace();
     const races = Object.entries(st.index.races || {}).map(([id, r]) => ({ id, ...r }));
     const venues = [...new Set(races.map((r) => r.venue))];
@@ -213,15 +443,17 @@ h2 { font-size: 15px; margin: 16px 0 6px; }
       st.venue = next ? next.venue : venues[0];
     }
     const list = races.filter((r) => r.venue === st.venue).sort((a, b) => a.rn - b.rn);
-    app.innerHTML = `<header><h1>期待値ボード <span class="upd">${esc(st.index.date)} 更新 ${esc((st.index.updated || '').slice(11, 16))}</span></h1>
+    app.innerHTML = `<header><h1>期待値ボード <span class="upd">${esc(st.index.date)} 更新 ${esc((st.index.updated || '').slice(11, 16))} <button class="back" id="tobank" style="margin-left:8px">💰資金管理</button></span></h1>
       <div class="tabs">${venues.map((v) => `<button class="tab ${v === st.venue ? 'on' : ''}" data-v="${esc(v)}">${esc(v)}${races.some((r) => r.venue === v && recCount(r) && (minutesTo(r.deadline || r.start) ?? -1) > 0) ? '<span class="dot"></span>' : ''}</button>`).join('')}</div></header>
-      <main>${evControl()}${list.map(raceCard).join('') || '<p class="muted">この場のレースはまだありません。</p>'}
+      <main>${boardHtml()}<h2 style="margin-top:18px">🏟 ${esc(st.venue || '')} のレース</h2>${evControl()}${list.map(raceCard).join('') || '<p class="muted">この場のレースはまだありません。</p>'}
       <div class="card legend">${evb(1.35)}${evb(1.15)}${evb(1.03)}<span>EV＝当たる確率×今のオッズ。1.10以上が買いの目安</span></div>
       <p class="note">締切は発走の5分前です。締切2分前のオッズが最後の判断材料です。🔥＝2車複・ワイドで期待値1.10以上（事前登録の★・買い目群を含む）。
       2車複・ワイド以外は過去の検証で負けていたため参考表示です。緑の点が付いた場は、これから締切のおすすめがあります。</p></main>`;
     app.querySelectorAll('.tab').forEach((b) => b.onclick = () => { st.venue = b.dataset.v; render(); });
     bindEv();
     app.querySelectorAll('.race').forEach((c) => c.onclick = () => openRace(c.dataset.id));
+    bindBoard();
+    const tb = document.getElementById('tobank'); if (tb) tb.onclick = () => { st.page = 'bank'; render(); window.scrollTo(0, 0); };
   }
   function recCount(r) {
     if (!r.best) return 0;
@@ -395,7 +627,7 @@ h2 { font-size: 15px; margin: 16px 0 6px; }
   function bindEv() {
     app.querySelectorAll('.evsel button').forEach((b) => b.onclick = (e) => { e.stopPropagation(); st.evMin = parseFloat(b.dataset.ev); store.set('kb_evmin', String(st.evMin)); render(); });
   }
-  function bindBack() { const b = document.getElementById('back'); if (b) b.onclick = () => { st.race = null; st.raceData = null; render(); }; }
+  function bindBack() { const b = document.getElementById('back'); if (b) b.onclick = () => { st.page = 'board'; st.race = null; st.raceData = null; render(); }; }
 
   // ---- 起動
   if (!window.crypto || !crypto.subtle || typeof DecompressionStream === 'undefined') {
@@ -407,7 +639,7 @@ h2 { font-size: 15px; margin: 16px 0 6px; }
   const saved = store.get('kb_pw');
   if (saved) {
     st.pw = saved;
-    load(saved).then(() => { startRefresh(); render(); }).catch((e) => { store.del('kb_pw'); loginView(e.name === 'OperationError' ? '保存したパスワードが使えません' : e.message); });
+    load(saved).then(() => afterLogin()).catch((e) => { store.del('kb_pw'); loginView(e.name === 'OperationError' ? '保存したパスワードが使えません' : e.message); });
   } else {
     loginView();
   }
