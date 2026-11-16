@@ -83,6 +83,17 @@ def main():
     S.SiteBuilder(E.load_model(), PW, out, '21000101', cards_fn=lambda nk: cards)
     check(sorted(os.listdir(out)) == ['meta.json'], '日が変わったら前の日のデータを消す')
 
+    # ワイド: 最低〜最高の倍率の幅で期待値を出す。買い目群は展開した各点の確率・期待値も持つ
+    odds_w = odds + [dict(race_id='', bet_type='ワイド', combination=f'{a}-{b}', odds=2.0, odds_max=3.0, absent=0)
+                     for a in range(1, 8) for b in range(a + 1, 8)]
+    sbw = S.SiteBuilder(E.load_model(), PW, tempfile.mkdtemp(), '20991231', cards_fn=lambda nk: cards)
+    rw = sbw.on_snapshot(NK, 'C-2', start, odds_w, start - timedelta(minutes=7))['snaps']['C-2']
+    w0 = rw['types']['ワイド'][0]
+    check(len(w0) == 10 and w0[7] == 3.0 and abs(w0[9] - round(w0[1] * w0[8], 3)) < 1e-9 and w0[9] > w0[6],
+          f'ワイドは最低〜最高の倍率それぞれで期待値（幅） {w0}')
+    g = next(iter(rw['groups'].values()))['ev'][0]
+    check(all(len(x) == 5 and abs(x[4] - round(x[3] * x[2], 3)) < 1e-9 for x in g[6]), '買い目群の各点に確率と期待値')
+
     # 閲覧ページと同じ方式で復号できるか（Node の WebCrypto）
     if shutil.which('node'):
         out2 = tempfile.mkdtemp()

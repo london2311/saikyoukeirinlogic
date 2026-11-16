@@ -137,11 +137,25 @@ class SiteBuilder:
             return None
         wt = KC_wt(nk)
         types = {}
+        # ワイドは、3着に誰が入るかで払戻が変わるため、最低〜最高の倍率の幅がある。最高倍率も持っておく
+        wmax = {}
+        for o in odds_rows:
+            if o.get('bet_type') == 'ワイド':
+                try:
+                    hi = float(o.get('odds_max') or 0)
+                except (TypeError, ValueError):
+                    hi = 0
+                if hi >= 1.0:
+                    wmax['-'.join(sorted(str(o['combination']).split('-'), key=int))] = hi
         for t in res.get('tickets', []):
             # 締切後の下落を見込んだ「確定時の予想オッズ」と、それで計算した期待値（下落の学習データが無ければ今のオッズと同じ）
             of = round(t['odds'] * drift_ratio(self.drift, t['type'], snap, t['odds'], t['ev']), 1)
-            types.setdefault(t['type'], []).append(
-                [t['key'], round(t['prob'], 5), t['odds'], round(t['ev'], 3), buy_line(t['prob']), of, round(t['prob'] * of, 3)])
+            row = [t['key'], round(t['prob'], 5), t['odds'], round(t['ev'], 3), buy_line(t['prob']), of, round(t['prob'] * of, 3)]
+            if t['type'] == 'ワイド' and wmax.get(t['key'], 0) > t['odds']:
+                hi = wmax[t['key']]
+                hf = round(hi * drift_ratio(self.drift, t['type'], snap, hi, t['prob'] * hi), 1)
+                row += [hi, hf, round(t['prob'] * hf, 3)]  # 最高倍率・その確定予想・その期待値（期待値は「最低〜最高」の幅）
+            types.setdefault(t['type'], []).append(row)
         for bt in types:
             types[bt].sort(key=lambda x: -x[6])
         hits = {}
@@ -164,8 +178,13 @@ class SiteBuilder:
         race = self._load(f'{wt}.enc') or dict(id=wt, venue=venue, rn=int(nk[10:12]), start=f'{start:%H:%M}', snaps={})
         race['deadline'] = f'{deadline:%H:%M}'
         race['riders'] = riders
+        try:
+            import reasons
+            why = reasons.build(cards, res)
+        except Exception:  # noqa: BLE001  説明が作れなくても数値は出す
+            why = {}
         race['snaps'][snap] = dict(at=f'{now:%H:%M:%S}', market_ok=bool(res.get('market_ok')), win=win, types=types,
-                                   hits=hits, strat=strat, groups=groups)
+                                   hits=hits, strat=strat, groups=groups, why=why)
         self._save(f'{wt}.enc', race)
         ent = self.index['races'].setdefault(wt, dict(venue=venue, rn=int(nk[10:12]), start=f'{start:%H:%M}', snaps=[], best=None))
         ent['deadline'] = f'{deadline:%H:%M}'
@@ -219,8 +238,10 @@ class SiteBuilder:
 
             def core(g):
                 ev_r, st = F.realized_ev(g, probs, odds)
+                # 展開した各点: [組, 賭け金, 確定予想オッズ, 確率, その点だけの期待値]
                 return [g['n'], round(g['p'], 4), round(g['odds'], 2) if g['odds'] else None, round(g['ev'], 3),
-                        round(ev_r, 3), [[k, s, odds[bt][k]] for k, s in zip(g['keys'], st)]]
+                        round(ev_r, 3), [[k, s, odds[bt][k], round(probs[bt].get(k, 0.0), 4), round(probs[bt].get(k, 0.0) * odds[bt][k], 3)]
+                                         for k, s in zip(g['keys'], st)]]
 
             def ranked(p_floor, top):
                 """的中率の下限を満たす群を、「切った後」も含めた期待値の高い順に。切り案があれば添える"""
