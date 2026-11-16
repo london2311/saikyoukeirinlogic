@@ -9,12 +9,17 @@ from urllib.request import Request, urlopen
 
 UA = 'Mozilla/5.0 (compatible; keirin-research-probe/1.0; personal analysis)'
 SITES = {
-    'netkeirin': ['https://keirin.netkeiba.com/', 'https://www.netkeiba.com/'],
+    # 2026-11-16: 自分で計算した買い目を有料で公開する場合に、営利利用が認められる取得元があるかを調べる
+    'KEIRIN.JP（JKA公式）': ['https://keirin.jp/', 'https://keirin.jp/pc/top'],
+    'JKA': ['https://www.jka-cycle.jp/', 'https://jka-cycle.jp/'],
+    'オッズパーク': ['https://www.oddspark.com/keirin/', 'https://www.oddspark.com/'],
     'チャリロト': ['https://www.chariloto.com/'],
-    '楽天Kドリームス': ['https://www.kdreams.jp/', 'https://my.kdreams.jp/'],
+    '楽天Kドリームス': ['https://www.kdreams.jp/'],
+    'netkeirin': ['https://keirin.netkeiba.com/'],
 }
 LINK_WORDS = ('規約', '利用条件', 'kiyaku', 'terms', 'rule', 'policy', 'ポリシー')
-KEYS = ('スクレイピング', 'クローラ', 'クローリング', 'ロボット', '自動', '機械的', 'プログラム', '複製', '転載', '二次利用', '負荷', '営利', '私的')
+KEYS = ('スクレイピング', 'クローラ', 'クローリング', 'ロボット', '自動', '機械的', 'プログラム', '複製', '転載', '二次利用', '負荷', '営利',
+        '私的', '商用', '商業', '営業', '有償', '販売', '再配布', '著作権', '加工', '第三者に提供', 'データ提供')
 
 
 def get(url):
@@ -53,14 +58,14 @@ def main():
             time.sleep(3)
         seen = set()
         for url, lab in cands:
-            if url in seen or not url.startswith('http') or len(seen) >= 4:
+            if url in seen or not url.startswith('http') or len(seen) >= 6:
                 continue
             seen.add(url)
             st, html = get(url)
             lines = text_of(html)
             hits = [l for l in lines if any(k in l for k in KEYS) and len(l) < 400]
             print(f'\n-- 規約候補: {lab} {url} → HTTP {st} / 該当 {len(hits)}行')
-            for l in hits[:25]:
+            for l in hits[:40]:
                 print(f'   ・{l}')
             time.sleep(3)
 

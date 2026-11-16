@@ -1,0 +1,238 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>期待値ボード</title>
+<style>
+:root {
+  --bg: #f6f7f9; --card: #ffffff; --ink: #1d2433; --sub: #5b6476; --line: #e2e5eb;
+  --accent: #2456d6; --accent-soft: #e8eefc; --good: #0f7b4a; --good-soft: #e3f4ec; --warn: #9a5b00; --warn-soft: #fff3df;
+  --bad: #b42318;
+}
+@media (prefers-color-scheme: dark) {
+  :root { --bg: #11141a; --card: #1a1f28; --ink: #e8ebf1; --sub: #9aa3b5; --line: #2a313d;
+    --accent: #7aa2ff; --accent-soft: #1f2a44; --good: #4cc38a; --good-soft: #15302a; --warn: #f0b354; --warn-soft: #33270f; --bad: #ff7b72; }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Noto Sans JP", sans-serif; }
+header { position: sticky; top: 0; z-index: 5; background: var(--card); border-bottom: 1px solid var(--line); padding: 10px 16px; }
+header h1 { font-size: 17px; margin: 0; display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+header .upd { font-size: 12px; color: var(--sub); font-weight: normal; }
+main { max-width: 860px; margin: 0 auto; padding: 12px 16px 60px; }
+.tabs { display: flex; gap: 6px; overflow-x: auto; padding: 8px 0 2px; scrollbar-width: none; }
+.tab { flex: none; border: 1px solid var(--line); background: var(--card); color: var(--ink); border-radius: 999px; padding: 5px 12px; font-size: 14px; cursor: pointer; }
+.tab.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+.card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 12px; margin: 10px 0; }
+.race { cursor: pointer; }
+.race .top { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+.race .ttl { font-weight: 700; font-size: 16px; }
+.muted { color: var(--sub); font-size: 13px; }
+.pill { display: inline-block; font-size: 12px; padding: 1px 8px; border-radius: 999px; background: var(--accent-soft); color: var(--accent); margin-right: 4px; }
+.pill.good { background: var(--good-soft); color: var(--good); }
+.pill.warn { background: var(--warn-soft); color: var(--warn); }
+.pill.off { background: transparent; color: var(--sub); border: 1px dashed var(--line); }
+.best { margin-top: 6px; font-size: 13px; display: grid; grid-template-columns: auto 1fr auto auto; gap: 2px 10px; }
+.best .ev { text-align: right; font-variant-numeric: tabular-nums; }
+.seg { display: flex; gap: 6px; margin: 8px 0; flex-wrap: wrap; }
+.seg button { border: 1px solid var(--line); background: var(--card); color: var(--ink); border-radius: 8px; padding: 6px 12px; cursor: pointer; font-size: 14px; }
+.seg button.on { border-color: var(--accent); color: var(--accent); background: var(--accent-soft); font-weight: 700; }
+.seg button:disabled { opacity: .4; cursor: default; }
+table { width: 100%; border-collapse: collapse; font-size: 14px; font-variant-numeric: tabular-nums; }
+th, td { padding: 6px 4px; border-bottom: 1px solid var(--line); text-align: right; white-space: nowrap; }
+th:first-child, td:first-child { text-align: left; white-space: normal; }
+th { color: var(--sub); font-weight: 600; font-size: 12px; }
+tr.buy td { background: var(--good-soft); }
+.ev-hi { color: var(--good); font-weight: 700; }
+.ev-lo { color: var(--sub); }
+h2 { font-size: 15px; margin: 16px 0 6px; }
+.back { border: none; background: none; color: var(--accent); font-size: 15px; padding: 0; cursor: pointer; }
+.login { max-width: 360px; margin: 18vh auto 0; }
+.login input[type=password] { width: 100%; font-size: 16px; padding: 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--card); color: var(--ink); }
+.login button { margin-top: 10px; width: 100%; font-size: 16px; padding: 10px; border: none; border-radius: 8px; background: var(--accent); color: #fff; cursor: pointer; }
+.err { color: var(--bad); font-size: 13px; margin-top: 8px; min-height: 1em; }
+.note { font-size: 12px; color: var(--sub); margin-top: 14px; }
+.riders { font-size: 13px; color: var(--sub); }
+.more { margin-top: 6px; border: none; background: none; color: var(--accent); cursor: pointer; padding: 0; font-size: 14px; }
+.scroll { overflow-x: auto; }
+</style>
+</head>
+<body>
+<div id="app"></div>
+<script>
+(() => {
+  'use strict';
+  // ---- 設定（GitHub Pages の URL から自動で決める）
+  const OWNER = location.hostname.split('.')[0] || 'london2311';
+  const REPO = location.pathname.split('/').filter(Boolean)[0] || 'saikyoukeirinlogic';
+  const BRANCH = 'site-data';
+  const REFRESH_SEC = 90;
+  const SNAPS = ['T-15', 'T-10', 'T-5', 'T-4'];
+  const SNAP_LABEL = { 'T-15': '15分前', 'T-10': '10分前', 'T-5': '5分前', 'T-4': '4分前' };
+  const TYPES = ['2車複', 'ワイド', '3連複', '2車単', '3連単'];
+  const VALIDATED = new Set(['2車複', 'ワイド']);
+  const app = document.getElementById('app');
+  const st = { key: null, meta: null, sha: null, index: null, venue: null, race: null, raceData: null, snap: null, showAll: {}, timer: null };
+
+  const store = {
+    get(k) { try { return localStorage.getItem(k); } catch (e) { return null; } },
+    set(k, v) { try { localStorage.setItem(k, v); } catch (e) { /* 保存できない環境 */ } },
+    del(k) { try { localStorage.removeItem(k); } catch (e) { /* noop */ } },
+  };
+  const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  const b64 = (s) => Uint8Array.from(atob(s), (c) => c.charCodeAt(0));
+  const pct = (p) => (p * 100).toFixed(p < 0.1 ? 1 : 0) + '%';
+  const x1 = (v) => (v == null ? '-' : Number(v).toFixed(1));
+  const fmtKey = (bt, k) => (bt === '2車単' || bt === '3連単') ? k.replace(/-/g, '→') : k.replace(/-/g, '=');
+
+  async function deriveKey(pw, meta) {
+    const base = await crypto.subtle.importKey('raw', new TextEncoder().encode(pw), 'PBKDF2', false, ['deriveKey']);
+    return crypto.subtle.deriveKey({ name: 'PBKDF2', salt: b64(meta.salt), iterations: meta.iter, hash: 'SHA-256' },
+      base, { name: 'AES-GCM', length: 256 }, false, ['decrypt']);
+  }
+  async function decrypt(buf) {
+    const u = new Uint8Array(buf);
+    const plain = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: u.slice(0, 12) }, st.key, u.slice(12));
+    const ds = new Blob([plain]).stream().pipeThrough(new DecompressionStream('deflate'));
+    return JSON.parse(await new Response(ds).text());
+  }
+  async function latestSha() {
+    const r = await fetch(`https://api.github.com/repos/${OWNER}/${REPO}/branches/${BRANCH}`, { cache: 'no-store' });
+    if (!r.ok) throw new Error('データがまだありません（' + r.status + '）');
+    return (await r.json()).commit.sha;
+  }
+  const raw = (name) => fetch(`https://raw.githubusercontent.com/${OWNER}/${REPO}/${st.sha}/${name}`);
+  async function getEnc(name) { const r = await raw(name); if (!r.ok) throw new Error(name + ' ' + r.status); return decrypt(await r.arrayBuffer()); }
+
+  async function load(pw) {
+    st.sha = await latestSha();
+    const meta = await (await raw('meta.json')).json();
+    if (!st.key || !st.meta || st.meta.salt !== meta.salt) { st.key = await deriveKey(pw || st.pw, meta); st.meta = meta; }
+    st.index = await getEnc('index.enc');
+    if (st.race) { try { st.raceData = await getEnc(st.race + '.enc'); } catch (e) { /* まだ記録なし */ } }
+  }
+
+  // ---- ログイン
+  function loginView(msg) {
+    app.innerHTML = `<div class="login card"><h1 style="font-size:18px;margin:0 0 8px">期待値ボード</h1>
+      <p class="muted">個人閲覧用です。パスワードを入力してください（このページの中だけで復号します）。</p>
+      <input id="pw" type="password" autocomplete="current-password" placeholder="パスワード">
+      <label class="muted" style="display:block;margin-top:8px"><input id="keep" type="checkbox"> この端末に保存する</label>
+      <button id="go">開く</button><div class="err" id="err">${esc(msg || '')}</div></div>`;
+    const go = async () => {
+      const pw = document.getElementById('pw').value;
+      document.getElementById('err').textContent = '読み込み中…';
+      try {
+        st.pw = pw; st.key = null; await load(pw);
+        if (document.getElementById('keep').checked) store.set('kb_pw', pw);
+        startRefresh(); render();
+      } catch (e) {
+        document.getElementById('err').textContent = (e.name === 'OperationError') ? 'パスワードが違います' : ('読み込めません: ' + e.message);
+      }
+    };
+    document.getElementById('go').onclick = go;
+    document.getElementById('pw').onkeydown = (e) => { if (e.key === 'Enter') go(); };
+  }
+
+  function startRefresh() {
+    clearInterval(st.timer);
+    st.timer = setInterval(async () => { try { await load(); render(); } catch (e) { /* 次回再試行 */ } }, REFRESH_SEC * 1000);
+  }
+
+  // ---- 一覧
+  function minutesTo(hhmm) {
+    if (!hhmm) return null;
+    const [h, m] = hhmm.split(':').map(Number);
+    const now = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Tokyo' }));
+    return Math.round((h * 60 + m) - (now.getHours() * 60 + now.getMinutes()));
+  }
+  function render() {
+    if (st.race) return renderRace();
+    const races = Object.entries(st.index.races || {}).map(([id, r]) => ({ id, ...r }));
+    const venues = [...new Set(races.map((r) => r.venue))];
+    if (!st.venue || !venues.includes(st.venue)) {
+      const next = races.filter((r) => (minutesTo(r.start) ?? -1) >= -2).sort((a, b) => a.start.localeCompare(b.start))[0];
+      st.venue = next ? next.venue : venues[0];
+    }
+    const list = races.filter((r) => r.venue === st.venue).sort((a, b) => a.rn - b.rn);
+    app.innerHTML = `<header><h1>期待値ボード <span class="upd">${esc(st.index.date)} 更新 ${esc((st.index.updated || '').slice(11, 16))}</span></h1>
+      <div class="tabs">${venues.map((v) => `<button class="tab ${v === st.venue ? 'on' : ''}" data-v="${esc(v)}">${esc(v)}</button>`).join('')}</div></header>
+      <main>${list.map(raceCard).join('') || '<p class="muted">この場のレースはまだありません。</p>'}
+      <p class="note">締切は発走の約2分前です。5分前のオッズが最後の判断材料です。★＝事前登録した買い方（2車複・ワイド）に該当。
+      期待値（EV）＝当たる確率×今のオッズ。1.10以上が買いの目安。2車複・ワイド以外は過去の検証で負けていたため参考表示です。</p></main>`;
+    app.querySelectorAll('.tab').forEach((b) => b.onclick = () => { st.venue = b.dataset.v; render(); });
+    app.querySelectorAll('.race').forEach((c) => c.onclick = () => openRace(c.dataset.id));
+  }
+  function raceCard(r) {
+    const m = minutesTo(r.start);
+    const when = m == null ? '' : (m > 0 ? `あと${m}分` : (m > -3 ? '締切間近' : '発走済み'));
+    const snaps = SNAPS.map((s) => `<span class="pill ${(r.snaps || []).includes(s) ? '' : 'off'}">${SNAP_LABEL[s]}</span>`).join('');
+    const strat = r.best && r.best.strat ? `<span class="pill good">★ ${r.best.strat}点</span>` : '';
+    const best = r.best ? `<div class="best">${r.best.rows.map(([bt, k, od, ev]) =>
+      `<span class="muted">${esc(bt)}</span><span>${esc(fmtKey(bt, k))}</span><span class="muted">${x1(od)}倍</span><span class="ev ${ev >= 1.1 ? 'ev-hi' : 'ev-lo'}">EV ${ev.toFixed(2)}</span>`).join('')}</div>
+      <div class="muted" style="margin-top:4px">${SNAP_LABEL[r.best.snap] || ''}時点の、各券種で期待値が最も高い組</div>` : '<div class="muted">まだ記録がありません</div>';
+    return `<div class="card race" data-id="${esc(r.id)}"><div class="top"><span class="ttl">${r.rn}R <span class="muted">発走 ${esc(r.start)}</span></span>
+      <span class="muted">${when}</span></div><div style="margin-top:4px">${snaps}${strat}</div>${best}</div>`;
+  }
+
+  // ---- レース詳細
+  async function openRace(id) {
+    st.race = id; st.raceData = null; st.snap = null; st.showAll = {};
+    try { st.raceData = await getEnc(id + '.enc'); } catch (e) { /* noop */ }
+    render(); window.scrollTo(0, 0);
+  }
+  function renderRace() {
+    const d = st.raceData;
+    const head = `<header><h1><button class="back" id="back">← 一覧</button><span class="upd">${esc(st.index.date)}</span></h1></header>`;
+    if (!d) { app.innerHTML = head + '<main><p class="muted">まだ記録がありません。</p></main>'; return bindBack(); }
+    const have = SNAPS.filter((s) => d.snaps[s]);
+    if (!st.snap || !d.snaps[st.snap]) st.snap = have[have.length - 1];
+    const s = d.snaps[st.snap];
+    const riders = (d.riders || []).map(([c, n, p, pt, sty]) => `${c} ${esc(n)}（${esc(p)}・${esc(pt)}・${esc(sty)}）`).join(' / ');
+    const win = Object.entries(s.win || {}).sort((a, b) => b[1] - a[1]).map(([c, p]) => `${c}番 ${pct(p)}`).join(' / ');
+    const strat = (s.strat || []).length ? `<div class="card"><h2 style="margin-top:0">★ 事前登録した買い方に該当</h2><div class="scroll"><table>
+      <tr><th>買い目</th><th>今</th><th>この倍率以上</th><th>EV</th></tr>
+      ${s.strat.map(([id, lab, bt, k, od, ev, line]) => `<tr class="buy"><td>${esc(bt)} ${esc(fmtKey(bt, k))}<div class="muted">${esc(lab)}</div></td>
+      <td>${x1(od)}倍</td><td>${x1(line)}倍</td><td class="ev-hi">${ev.toFixed(2)}</td></tr>`).join('')}</table></div></div>` : '';
+    const tables = TYPES.map((bt) => typeTable(bt, s.types[bt] || [])).join('');
+    app.innerHTML = head + `<main><div class="card"><div class="ttl" style="font-size:18px;font-weight:700">${esc(d.venue)} ${d.rn}R <span class="muted">発走 ${esc(d.start)}</span></div>
+      <div class="riders">${riders}</div>
+      <div class="seg">${SNAPS.map((x) => `<button data-s="${x}" ${d.snaps[x] ? '' : 'disabled'} class="${x === st.snap ? 'on' : ''}">${SNAP_LABEL[x]}</button>`).join('')}</div>
+      <div class="muted">取得 ${esc(s.at)} ／ ${s.market_ok ? 'オッズと融合済み' : '<span style="color:var(--bad)">3連単オッズ不足（参考値）</span>'}</div>
+      <div class="muted" style="margin-top:4px">1着の確率: ${win}</div></div>${strat}${tables}
+      <p class="note">EV＝当たる確率×今のオッズ（ワイドは最低倍率）。「この倍率以上」＝EVが1.10になる倍率。確率0.5%未満・300倍超は既定で隠しています。</p></main>`;
+    bindBack();
+    app.querySelectorAll('.seg button').forEach((b) => b.onclick = () => { st.snap = b.dataset.s; render(); });
+    app.querySelectorAll('.more').forEach((b) => b.onclick = () => { st.showAll[b.dataset.t] = !st.showAll[b.dataset.t]; render(); });
+  }
+  function typeTable(bt, rows) {
+    if (!rows.length) return `<div class="card"><h2 style="margin:0">${esc(bt)} <span class="muted" style="font-weight:normal">この時点のオッズがありません</span></h2></div>`;
+    const all = !!st.showAll[bt];
+    const shown = all ? rows : rows.filter((x) => x[1] >= 0.005 && x[2] <= 300).slice(0, 15);
+    const tag = VALIDATED.has(bt) ? '<span class="pill good">検証済み</span>' : '<span class="pill warn">参考</span>';
+    return `<div class="card"><h2 style="margin-top:0">${esc(bt)} ${tag}<span class="muted" style="font-weight:normal"> 期待値の高い順</span></h2>
+      <div class="scroll"><table><tr><th>組</th><th>確率</th><th>今</th><th>この倍率以上</th><th>EV</th></tr>
+      ${shown.map(([k, p, od, ev, line]) => `<tr class="${VALIDATED.has(bt) && ev >= 1.1 && p >= 0.005 && od <= 300 ? 'buy' : ''}">
+        <td>${esc(fmtKey(bt, k))}</td><td>${pct(p)}</td><td>${x1(od)}倍</td><td>${x1(line)}倍</td>
+        <td class="${ev >= 1.1 ? 'ev-hi' : 'ev-lo'}">${ev.toFixed(2)}</td></tr>`).join('')}</table></div>
+      <button class="more" data-t="${esc(bt)}">${all ? '上位だけ表示' : `全${rows.length}組を表示`}</button></div>`;
+  }
+  function bindBack() { const b = document.getElementById('back'); if (b) b.onclick = () => { st.race = null; st.raceData = null; render(); }; }
+
+  // ---- 起動
+  if (!window.crypto || !crypto.subtle || typeof DecompressionStream === 'undefined') {
+    app.innerHTML = '<div class="login card">このブラウザは対応していません。最新の Safari / Chrome で開いてください。</div>';
+    return;
+  }
+  const saved = store.get('kb_pw');
+  if (saved) {
+    st.pw = saved;
+    load(saved).then(() => { startRefresh(); render(); }).catch((e) => { store.del('kb_pw'); loginView(e.name === 'OperationError' ? '保存したパスワードが使えません' : e.message); });
+  } else {
+    loginView();
+  }
+})();
+</script>
+</body>
+</html>

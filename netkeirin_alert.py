@@ -3,7 +3,7 @@
 """
 netkeirin_alert.py — 発走前のオッズで事前登録した買い方を判定し、該当があれば自分宛てにメールで知らせる（私的利用のみ）
 
-netkeirin_snapshot.py から呼ばれる（--alert-snaps で指定した時点、既定は 発走6分前・4分前）。
+netkeirin_snapshot.py から呼ばれる（--alert-snaps で指定した時点、既定は 発走5分前・4分前）。
   * 判定する買い方: analysis/strategies.json で "alert": true のもの
   * 出走表は各レース1回だけ取得（1リクエスト）。オッズは記録用に取ったものをそのまま使う
   * 同じレース・同じ買い目は1回だけ知らせる。1日の送信は --alert-max 通まで
@@ -53,7 +53,7 @@ def buy_line(p, ev_min):
 
 
 class Alerter:
-    def __init__(self, model, sender=None, cards_fn=None, snaps=('T-6', 'T-4'), max_per_day=60, strategies_path=STRATEGIES):
+    def __init__(self, model, sender=None, cards_fn=None, snaps=('T-5', 'T-4'), max_per_day=60, strategies_path=STRATEGIES):
         import snapshot_ledger as L
         self.L = L
         self.model = model
