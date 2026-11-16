@@ -101,6 +101,34 @@ def make_alerter(a):
                       max_per_day=a.alert_max)
 
 
+SITE_FACTORY = None  # テスト用に差し替え可能
+
+
+def make_site(a, date, alerter):
+    import os
+    if SITE_FACTORY is not None:
+        return SITE_FACTORY(a, date, alerter)
+    pw = os.environ.get('SITE_PASSWORD', '')
+    if len(pw) < 12:
+        print('期待値ボード: パスワード未設定（または12文字未満）のため作りません')
+        return None
+    import json
+    import keirin_engine as E
+    import netkeirin_site as S
+    S.restore_from_branch(a.site_dir)
+    with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'analysis', 'strategies.json'), encoding='utf-8') as f:
+        strategies = [x for x in json.load(f)['strategies'] if x.get('alert')]
+    model = alerter.model if alerter is not None else E.load_model()
+    cache = alerter.cards if alerter is not None else {}
+    fetch_cards = alerter.cards_fn if alerter is not None else None
+    if fetch_cards is None:
+        import netkeirin_alert as NA
+        fetch_cards = NA.Alerter._fetch_cards
+    print('期待値ボード: 作成します')
+    return S.SiteBuilder(model, pw, a.site_dir, date, cards_cache=cache, cards_fn=fetch_cards, push_fn=S.git_push_fn(),
+                         strategies=strategies)
+
+
 def main(argv=None, clock=None, sleep=time.sleep):
     ap = argparse.ArgumentParser(description='発走前のオッズ（全券種）を記録（私的利用のみ）')
     ap.add_argument('--out-dir', required=True, help='データ用リポジトリの data フォルダ（公開リポジトリ内は不可）')
@@ -110,8 +138,10 @@ def main(argv=None, clock=None, sleep=time.sleep):
     ap.add_argument('--flush-cmd', default='', help='定期的に実行するコマンド（コミット用）')
     ap.add_argument('--flush-min', type=float, default=60)
     ap.add_argument('--alert', action='store_true', help='事前登録した買い方を判定してメールで知らせる（netkeirin_alert.py）')
-    ap.add_argument('--alert-snaps', default='T-6,T-4', help='判定する時点（--offsets に含めること）')
+    ap.add_argument('--alert-snaps', default='T-5,T-4', help='判定する時点（--offsets に含めること）')
     ap.add_argument('--alert-max', type=int, default=60, help='1日に送るメールの上限')
+    ap.add_argument('--site', action='store_true', help='期待値ボード（暗号化）のデータを作って site-data ブランチに置く（netkeirin_site.py）')
+    ap.add_argument('--site-dir', default='_site_out', help='期待値ボードのデータの作業フォルダ（公開側には入れない）')
     a = ap.parse_args(argv)
     clock = clock or (lambda: datetime.now(N.JST))
 
@@ -128,6 +158,8 @@ def main(argv=None, clock=None, sleep=time.sleep):
     races, listed_at, flushed_at = [], None, clock()
     stats = dict(snaps=0, failed=0)
     alerter = make_alerter(a) if a.alert else None
+    site = make_site(a, date, alerter) if a.site else None
+    site_flushed = [clock()]
 
     def flush():
         nonlocal flushed_at
@@ -146,6 +178,8 @@ def main(argv=None, clock=None, sleep=time.sleep):
                     races = N.list_today(date)
                     listed_at = now
                     print(f'[{now:%H:%M}] レース一覧 {len(races)}件')
+                    if site is not None:
+                        site.set_races(races)
                 except (N.HTTPError, N.URLError, ValueError) as e:
                     print(f'[{now:%H:%M}] レース一覧の取得に失敗 {type(e).__name__}')
                     listed_at = now - timedelta(minutes=LIST_REFRESH_MIN - 5)
@@ -172,11 +206,21 @@ def main(argv=None, clock=None, sleep=time.sleep):
                             raise
                         except Exception as e:  # noqa: BLE001  判定の失敗で記録を止めない
                             print(f'  ! 判定に失敗 {type(e).__name__}')
+                    if site is not None:
+                        try:
+                            site.on_snapshot(nk, snap, st, rows, clock())
+                        except N.Blocked:
+                            raise
+                        except Exception as e:  # noqa: BLE001
+                            print(f'  ! 期待値ボードの計算に失敗 {type(e).__name__}')
             if races and remaining(races, date, offsets, done_nk(), clock()) == 0:
                 print('今日の記録すべきレースは終わりました')
                 break
             if a.flush_min and clock() - flushed_at >= timedelta(minutes=a.flush_min):
                 flush()
+            if site is not None and clock() - site_flushed[0] >= timedelta(seconds=60):
+                site.flush()
+                site_flushed[0] = clock()
             sleep(20)
     except N.Blocked as e:
         print(f'!! サーバーから拒否されたため中断しました（回避はしません）: {e}')
@@ -185,6 +229,9 @@ def main(argv=None, clock=None, sleep=time.sleep):
         print(f'記録 {stats["snaps"]}件 / 失敗 {stats["failed"]}件')
         if alerter is not None:
             print(alerter.summary())
+        if site is not None:
+            site.flush()
+            print(site.summary())
 
 
 if __name__ == '__main__':
