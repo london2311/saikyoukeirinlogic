@@ -257,8 +257,12 @@ def list_races(date: str) -> list:
     return sorted(ids)
 
 
+DEADLINES = {}  # race_id → 締切 'HH:MM'（レース一覧に載っている場合）
+DEADLINE_BEFORE_MIN = 5  # 一覧に締切が無い時は、発走のこの分数前を締切とみなす
+
+
 def parse_race_list(list_html: str, date: str) -> list:
-    """レース一覧 API の応答 → [(race_id, 発走 'HH:MM'), ...]"""
+    """レース一覧 API の応答 → [(race_id, 発走 'HH:MM'), ...]。締切時刻が載っていれば DEADLINES に入れる"""
     out = {}
     for m in re.finditer(r'<li id\s*=\s*"racing_color_(\d{12})"(.*?)(?=<li id\s*=\s*"racing_color_|\Z)', list_html, flags=re.S):
         rid, body = m.group(1), m.group(2)
@@ -266,6 +270,9 @@ def parse_race_list(list_html: str, date: str) -> list:
             continue
         st = re.search(r'発走\s*(\d{1,2}:\d{2})', body)
         out[rid] = st.group(1) if st else ''
+        dl = re.search(r'締切\s*(\d{1,2}:\d{2})', body)
+        if dl:
+            DEADLINES[rid] = dl.group(1)
     return sorted(out.items())
 
 
@@ -284,6 +291,15 @@ def list_today(date: str, venue: str = None) -> list:
     elif venue:
         races = {k: v for k, v in races.items() if k[8:10] == venue}
     return sorted(races.items())
+
+
+def deadline_dt(date: str, race_id: str, start_hhmm: str):
+    """締切の時刻。一覧に締切があればそれ、無ければ発走の DEADLINE_BEFORE_MIN 分前"""
+    dl = DEADLINES.get(race_id)
+    if dl:
+        return start_dt(date, dl)
+    st = start_dt(date, start_hhmm)
+    return st - timedelta(minutes=DEADLINE_BEFORE_MIN) if st else None
 
 
 def start_dt(date: str, hhmm: str):

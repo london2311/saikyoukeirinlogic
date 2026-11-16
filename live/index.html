@@ -68,12 +68,12 @@ h2 { font-size: 15px; margin: 16px 0 6px; }
   const REPO = location.pathname.split('/').filter(Boolean)[0] || 'saikyoukeirinlogic';
   const BRANCH = 'site-data';
   const REFRESH_SEC = 90;
-  const SNAPS = ['T-15', 'T-10', 'T-5', 'T-4'];
-  const SNAP_LABEL = { 'T-15': '15分前', 'T-10': '10分前', 'T-5': '5分前', 'T-4': '4分前' };
+  const SNAPS = ['C-15', 'C-10', 'C-5', 'C-2'];  // 締切の15・10・5・2分前
+  const SNAP_LABEL = { 'C-15': '締切15分前', 'C-10': '締切10分前', 'C-5': '締切5分前', 'C-2': '締切2分前' };
   const TYPES = ['2車複', 'ワイド', '3連複', '2車単', '3連単'];
   const VALIDATED = new Set(['2車複', 'ワイド']);
   const app = document.getElementById('app');
-  const st = { key: null, meta: null, sha: null, index: null, venue: null, race: null, raceData: null, snap: null, showAll: {}, timer: null };
+  const st = { view: null, key: null, meta: null, sha: null, index: null, venue: null, race: null, raceData: null, snap: null, showAll: {}, timer: null };
 
   const store = {
     get(k) { try { return localStorage.getItem(k); } catch (e) { return null; } },
@@ -152,27 +152,28 @@ h2 { font-size: 15px; margin: 16px 0 6px; }
     const races = Object.entries(st.index.races || {}).map(([id, r]) => ({ id, ...r }));
     const venues = [...new Set(races.map((r) => r.venue))];
     if (!st.venue || !venues.includes(st.venue)) {
-      const next = races.filter((r) => (minutesTo(r.start) ?? -1) >= -2).sort((a, b) => a.start.localeCompare(b.start))[0];
+      const next = races.filter((r) => (minutesTo(r.deadline || r.start) ?? -1) >= 0).sort((a, b) => a.start.localeCompare(b.start))[0];
       st.venue = next ? next.venue : venues[0];
     }
     const list = races.filter((r) => r.venue === st.venue).sort((a, b) => a.rn - b.rn);
     app.innerHTML = `<header><h1>期待値ボード <span class="upd">${esc(st.index.date)} 更新 ${esc((st.index.updated || '').slice(11, 16))}</span></h1>
       <div class="tabs">${venues.map((v) => `<button class="tab ${v === st.venue ? 'on' : ''}" data-v="${esc(v)}">${esc(v)}</button>`).join('')}</div></header>
       <main>${list.map(raceCard).join('') || '<p class="muted">この場のレースはまだありません。</p>'}
-      <p class="note">締切は発走の約2分前です。5分前のオッズが最後の判断材料です。★＝事前登録した買い方（2車複・ワイド）に該当。
+      <p class="note">締切は発走の5分前です。締切2分前のオッズが最後の判断材料です。★＝事前登録した買い方（2車複・ワイド）に該当。
       期待値（EV）＝当たる確率×今のオッズ。1.10以上が買いの目安。2車複・ワイド以外は過去の検証で負けていたため参考表示です。</p></main>`;
     app.querySelectorAll('.tab').forEach((b) => b.onclick = () => { st.venue = b.dataset.v; render(); });
     app.querySelectorAll('.race').forEach((c) => c.onclick = () => openRace(c.dataset.id));
   }
   function raceCard(r) {
-    const m = minutesTo(r.start);
-    const when = m == null ? '' : (m > 0 ? `あと${m}分` : (m > -3 ? '締切間近' : '発走済み'));
+    const m = minutesTo(r.deadline || r.start);
+    const when = m == null ? '' : (m > 0 ? `締切まであと${m}分` : (minutesTo(r.start) > 0 ? '締切済み' : '発走済み'));
     const snaps = SNAPS.map((s) => `<span class="pill ${(r.snaps || []).includes(s) ? '' : 'off'}">${SNAP_LABEL[s]}</span>`).join('');
-    const strat = r.best && r.best.strat ? `<span class="pill good">★ ${r.best.strat}点</span>` : '';
+    const strat = (r.best && r.best.strat ? `<span class="pill good">★ ${r.best.strat}点</span>` : '') +
+      (r.best && r.best.grp ? `<span class="pill">買い目群 EV1.1↑ ${r.best.grp}</span>` : '');
     const best = r.best ? `<div class="best">${r.best.rows.map(([bt, k, od, ev]) =>
       `<span class="muted">${esc(bt)}</span><span>${esc(fmtKey(bt, k))}</span><span class="muted">${x1(od)}倍</span><span class="ev ${ev >= 1.1 ? 'ev-hi' : 'ev-lo'}">EV ${ev.toFixed(2)}</span>`).join('')}</div>
       <div class="muted" style="margin-top:4px">${SNAP_LABEL[r.best.snap] || ''}時点の、各券種で期待値が最も高い組</div>` : '<div class="muted">まだ記録がありません</div>';
-    return `<div class="card race" data-id="${esc(r.id)}"><div class="top"><span class="ttl">${r.rn}R <span class="muted">発走 ${esc(r.start)}</span></span>
+    return `<div class="card race" data-id="${esc(r.id)}"><div class="top"><span class="ttl">${r.rn}R <span class="muted">締切 ${esc(r.deadline || '-')}・発走 ${esc(r.start)}</span></span>
       <span class="muted">${when}</span></div><div style="margin-top:4px">${snaps}${strat}</div>${best}</div>`;
   }
 
@@ -195,15 +196,19 @@ h2 { font-size: 15px; margin: 16px 0 6px; }
       <tr><th>買い目</th><th>今</th><th>この倍率以上</th><th>EV</th></tr>
       ${s.strat.map(([id, lab, bt, k, od, ev, line]) => `<tr class="buy"><td>${esc(bt)} ${esc(fmtKey(bt, k))}<div class="muted">${esc(lab)}</div></td>
       <td>${x1(od)}倍</td><td>${x1(line)}倍</td><td class="ev-hi">${ev.toFixed(2)}</td></tr>`).join('')}</table></div></div>` : '';
-    const tables = TYPES.map((bt) => typeTable(bt, s.types[bt] || [])).join('');
-    app.innerHTML = head + `<main><div class="card"><div class="ttl" style="font-size:18px;font-weight:700">${esc(d.venue)} ${d.rn}R <span class="muted">発走 ${esc(d.start)}</span></div>
+    const view = st.view || 'single';
+    const tables = view === 'group' ? groupSection(s.groups || {}) : TYPES.map((bt) => typeTable(bt, s.types[bt] || [])).join('');
+    app.innerHTML = head + `<main><div class="card"><div class="ttl" style="font-size:18px;font-weight:700">${esc(d.venue)} ${d.rn}R <span class="muted">締切 ${esc(d.deadline || '-')}・発走 ${esc(d.start)}</span></div>
       <div class="riders">${riders}</div>
       <div class="seg">${SNAPS.map((x) => `<button data-s="${x}" ${d.snaps[x] ? '' : 'disabled'} class="${x === st.snap ? 'on' : ''}">${SNAP_LABEL[x]}</button>`).join('')}</div>
       <div class="muted">取得 ${esc(s.at)} ／ ${s.market_ok ? 'オッズと融合済み' : '<span style="color:var(--bad)">3連単オッズ不足（参考値）</span>'}</div>
-      <div class="muted" style="margin-top:4px">1着の確率: ${win}</div></div>${strat}${tables}
+      <div class="muted" style="margin-top:4px">1着の確率: ${win}</div>
+      <div class="seg" id="view"><button data-v="single" class="${view === 'single' ? 'on' : ''}">1点ごと</button>
+      <button data-v="group" class="${view === 'group' ? 'on' : ''}">買い目群（合成オッズ）</button></div></div>${strat}${tables}
       <p class="note">EV＝当たる確率×今のオッズ（ワイドは最低倍率）。「この倍率以上」＝EVが1.10になる倍率。確率0.5%未満・300倍超は既定で隠しています。</p></main>`;
     bindBack();
-    app.querySelectorAll('.seg button').forEach((b) => b.onclick = () => { st.snap = b.dataset.s; render(); });
+    app.querySelectorAll('.seg button[data-s]').forEach((b) => b.onclick = () => { st.snap = b.dataset.s; render(); });
+    app.querySelectorAll('#view button').forEach((b) => b.onclick = () => { st.view = b.dataset.v; store.set('kb_view', st.view); render(); });
     app.querySelectorAll('.more').forEach((b) => b.onclick = () => { st.showAll[b.dataset.t] = !st.showAll[b.dataset.t]; render(); });
   }
   function typeTable(bt, rows) {
@@ -218,6 +223,38 @@ h2 { font-size: 15px; margin: 16px 0 6px; }
         <td class="${ev >= 1.1 ? 'ev-hi' : 'ev-lo'}">${ev.toFixed(2)}</td></tr>`).join('')}</table></div>
       <button class="more" data-t="${esc(bt)}">${all ? '上位だけ表示' : `全${rows.length}組を表示`}</button></div>`;
   }
+  function groupSection(groups) {
+    const types = TYPES.filter((bt) => groups[bt]);
+    if (!types.length) return '<div class="card muted">この時点では買い目群を計算できません（3連単オッズ不足）。</div>';
+    const head = `<div class="card"><div class="muted">流し・フォーメーション・BOX・ライン決着の候補から、合成オッズでの期待値が高い順に表示します。
+      合成オッズ＝1÷Σ(1÷各点のオッズ)。どれが当たっても払戻がほぼ同じになるよう、オッズに反比例して賭けた場合の倍率です
+      （ワイドは各点100円の同額買い）。期待値＝的中率×合成オッズ。✂は「期待値の低い買い目を切ると期待値が上がる」提案です（的中率の下限は守ります）。<b>過去の検証では、買い目群は1点買いと同じくらいの成績で、
+      利益を増やすものではありません</b>（当たりやすさと払戻の安定が変わります）。3連単の流しで期待値1.10を超える組は過去にほぼありませんでした。</div></div>`;
+    return head + types.map((bt) => {
+      const g = groups[bt];
+      const tag = bt === '2車複' ? '<span class="pill">検証中</span>' : '<span class="pill warn">参考</span>';
+      const detail = (n, P, syn, ev, evr, st2) => `
+        <div class="scroll"><table><tr><th>買い目</th><th>オッズ</th><th>1000円の配分</th></tr>
+        ${st2.map(([k, stake, od]) => `<tr><td>${esc(fmtKey(bt, k))}</td><td>${x1(od)}倍</td><td>${stake}円</td></tr>`).join('')}</table></div>
+        <div class="muted">100円単位に丸めた配分での期待値 ${evr.toFixed(2)}</div>`;
+      const sumLine = (n, P, syn, ev) => `的中 ${pct(P)} ／ ${syn ? '合成 ' + syn.toFixed(1) + '倍' : '同額'} ／ <span class="${ev >= 1.1 ? 'ev-hi' : (ev >= 1.0 ? '' : 'ev-lo')}">EV ${ev.toFixed(2)}</span>`;
+      const list = (rows, title) => !rows.length ? '' : `<h2>${title}</h2>${rows.map((r) => {
+        const [lab, n, P, syn, ev, evr, st2, cut, n2, P2, syn2, ev2, evr2, st3] = r;
+        const best = cut ? Math.max(ev, ev2) : ev;
+        const cutHtml = cut ? `<div style="margin-top:6px;padding:6px 8px;border-left:3px solid var(--good);background:var(--good-soft);border-radius:6px">
+          ✂ <b>${cut.map((k) => esc(fmtKey(bt, k))).join('・')}</b> を切ると ${n2}点・${sumLine(n2, P2, syn2, ev2)}
+          ${ev2 >= 1.0 && ev < 1.0 ? '<span class="pill good">100%超え</span>' : ''}</div>` : '';
+        const more = `<details style="margin-top:4px"><summary class="muted" style="cursor:pointer">配分を見る（1000円）</summary>
+          ${cut ? '<div class="muted" style="margin-top:4px">切った後</div>' + detail(n2, P2, syn2, ev2, evr2, st3) + '<div class="muted" style="margin-top:6px">切る前</div>' : ''}
+          ${detail(n, P, syn, ev, evr, st2)}</details>`;
+        return `<div class="card" style="margin:6px 0;padding:8px 10px;${best >= 1.1 ? 'background:var(--good-soft)' : ''}">
+          <div style="display:flex;justify-content:space-between;gap:8px;align-items:baseline;flex-wrap:wrap">
+          <span><b>${esc(lab)}</b> <span class="muted">${n}点</span></span><span>${sumLine(n, P, syn, ev)}</span></div>
+          ${cutHtml}${more}</div>`;
+      }).join('')}`;
+      return `<div class="card"><h2 style="margin-top:0">${esc(bt)} ${tag}</h2>${list(g.ev, '期待値重視（的中率10%以上）')}${list(g.hit, '的中率重視（的中率30%以上）')}</div>`;
+    }).join('');
+  }
   function bindBack() { const b = document.getElementById('back'); if (b) b.onclick = () => { st.race = null; st.raceData = null; render(); }; }
 
   // ---- 起動
@@ -225,6 +262,7 @@ h2 { font-size: 15px; margin: 16px 0 6px; }
     app.innerHTML = '<div class="login card">このブラウザは対応していません。最新の Safari / Chrome で開いてください。</div>';
     return;
   }
+  st.view = store.get('kb_view') || 'single';
   const saved = store.get('kb_pw');
   if (saved) {
     st.pw = saved;

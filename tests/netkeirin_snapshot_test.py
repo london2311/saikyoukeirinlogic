@@ -54,9 +54,11 @@ def test_snapshot():
             '--flush-cmd', 'true'], clock=lambda: t[0], sleep=lambda s: (sleep(s), flushes.append(1)))
     rows = list(csv.DictReader(open(out / '2099' / 'odds_snap' / f'snap_{DATE}.csv', encoding='utf-8-sig')))
     snaps = sorted({(r['race_id'], r['snap']) for r in rows})
-    check(len(calls) == 4 and len(snaps) == 4, f'2レース × 2時点（12分前・4分前）を1回ずつ記録 {snaps}')
-    check(all(timedelta(minutes=3) <= (datetime(2099, 12, 31, 9, 30, tzinfo=N.JST) - c[0]) <= timedelta(minutes=12)
-              for c in calls if c[1].endswith('2301')), '発走 12〜4 分前の範囲で取得')
+    check(len(calls) == 8 and len(snaps) == 8, f'2レース × 4時点（締切15・10・5・2分前）を1回ずつ記録 {snaps}')
+    dl1 = datetime(2099, 12, 31, 9, 25, tzinfo=N.JST)  # 締切 = 発走 9:30 の5分前（一覧に締切が無い場合）
+    check(all(timedelta(minutes=1) <= (dl1 - c[0]) <= timedelta(minutes=15) for c in calls if c[1].endswith('2301')),
+          '締切の15〜2分前の範囲で取得（締切後は取らない）')
+    check({r['deadline_at'] for r in rows if r['race_id'].startswith('01')} == {'2099-12-31 09:25'}, '締切時刻も記録')
     check({r['bet_type'] for r in rows} == {'3連単', 'ワイド'}, '枠番の券種は保存しない')
     check(t[0] < datetime(2099, 12, 31, 10, 1, tzinfo=N.JST), '記録すべきレースが無くなったら --until を待たずに終了')
 
@@ -66,14 +68,23 @@ def test_snapshot():
     S.main(['--out-dir', str(out), '--date', DATE, '--until', '11:00'], clock=lambda: t[0], sleep=sleep)
     check(calls == [], '再開時は記録済みを飛ばす')
 
-    # 開始が遅れた場合: 12分前の記録は 3 分以上遅れたら取らない（4分前は取る）
+    # 開始が遅れた場合: 締切5分前の記録は 2 分以上遅れたら取らない（締切2分前は取る）
     out2 = Path(tempfile.mkdtemp())
     calls.clear()
-    t[0] = datetime(2099, 12, 31, 9, 24, tzinfo=N.JST)
+    t[0] = datetime(2099, 12, 31, 9, 22, 30, tzinfo=N.JST)
     S.main(['--out-dir', str(out2), '--date', DATE, '--until', '9:40'], clock=lambda: t[0], sleep=sleep)
     rows = list(csv.DictReader(open(out2 / '2099' / 'odds_snap' / f'snap_{DATE}.csv', encoding='utf-8-sig')))
     got = sorted({(r['race_id'], r['snap']) for r in rows})
-    check([s for _, s in got] == ['T-4'], f'遅れた 12分前は取らず、4分前だけ記録 {got}')
+    check([s for _, s in got] == ['C-2'], f'遅れた 締切5分前は取らず、2分前だけ記録 {got}')
+
+    # レース一覧に締切時刻が載っていれば、それを使う
+    N.DEADLINES[f'{DATE}2301'] = '09:27'
+    check(N.deadline_dt(DATE, f'{DATE}2301', '09:30') == datetime(2099, 12, 31, 9, 27, tzinfo=N.JST), '一覧の締切時刻を優先')
+    N.DEADLINES.clear()
+    html = '<li id="racing_color_209912312301"><span>締切 9:26</span><span>発走 9:30</span></li>'
+    check(N.parse_race_list(html, DATE) == [(f'{DATE}2301', '9:30')] and N.DEADLINES.get(f'{DATE}2301') == '9:26',
+          'レース一覧から締切時刻を読み取る')
+    N.DEADLINES.clear()
 
 
 def test_backfill():

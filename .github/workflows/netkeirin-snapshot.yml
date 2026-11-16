@@ -1,4 +1,4 @@
-# 発走前のオッズ（全券種）を各レースの 15分前・10分前・5分前・4分前 に記録し、
+# 発走前のオッズ（全券種）を各レースの 締切15分前・10分前・5分前・2分前（締切は発走の5分前）に記録し、
 # 事前登録した買い方（strategies.json の alert）に該当すれば自分宛てにメールで知らせる。
 # 期待値ボード（live/index.html）用に、全券種の期待値を暗号化して site-data ブランチに置く（パスワードで閲覧）。
 # 記録は非公開のデータ用リポジトリにだけコミットする。
@@ -97,5 +97,5 @@ jobs:
           echo "::warning::コミットの push に失敗（次回の flush で再試行）"
           SH
           python netkeirin_snapshot.py --out-dir _data_repo/data --date "$DAY" --until "$UNTIL" \
-            --offsets 15,10,5,4 --alert --alert-snaps T-5,T-4 --site \
+            --offsets 15,10,5,2 --alert --alert-snaps C-5,C-2 --site \
             --flush-cmd "bash /tmp/flush.sh" --flush-min 60
