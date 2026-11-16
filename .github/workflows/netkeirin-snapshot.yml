@@ -1,4 +1,6 @@
-# 発走前のオッズ（全券種）を各レースの 12分前・4分前 に記録し、非公開のデータ用リポジトリにだけコミットする。
+# 発走前のオッズ（全券種）を各レースの 12分前・6分前・4分前 に記録し、
+# 事前登録した買い方（strategies.json の alert）に該当すれば自分宛てにメールで知らせる。
+# 記録は非公開のデータ用リポジトリにだけコミットする。
 # 「締切直前のオッズで判定したら本当に儲かるか」を正しく検証するためのデータ（結果ページの最終オッズとは別）。
 #
 # 重要: netkeirin 利用規約により、データは私的利用の範囲内でのみ利用できる。
@@ -70,12 +72,17 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: 記録（保存先は _data_repo/data のみ。1時間ごとにコミット）
+      - name: 記録と通知（保存先は _data_repo/data のみ。1時間ごとにコミット）
         if: steps.cfg.outputs.ok == 'true'
         env:
           UNTIL: ${{ steps.cfg.outputs.until }}
           DAY: ${{ steps.cfg.outputs.date }}
+          # 通知メール（任意）: Settings → Secrets and variables → Actions に登録。未設定なら判定だけ行う
+          ALERT_GMAIL_USER: ${{ secrets.ALERT_GMAIL_USER }}
+          ALERT_GMAIL_APP_PASSWORD: ${{ secrets.ALERT_GMAIL_APP_PASSWORD }}
+          ALERT_TO: ${{ secrets.ALERT_TO }}
         run: |
+          pip install --quiet numpy pandas scipy
           cat > /tmp/flush.sh <<'SH'
           cd _data_repo || exit 0
           git config user.name "github-actions[bot]"
@@ -87,4 +94,5 @@ jobs:
           echo "::warning::コミットの push に失敗（次回の flush で再試行）"
           SH
           python netkeirin_snapshot.py --out-dir _data_repo/data --date "$DAY" --until "$UNTIL" \
+            --offsets 12,6,4 --alert --alert-snaps T-6,T-4 \
             --flush-cmd "bash /tmp/flush.sh" --flush-min 60

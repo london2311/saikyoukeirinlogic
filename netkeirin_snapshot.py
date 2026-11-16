@@ -87,6 +87,20 @@ def remaining(races: list, date: str, offsets: list, done: set, now: datetime) -
     return n
 
 
+ALERTER_FACTORY = None  # テスト用に差し替え可能
+
+
+def make_alerter(a):
+    if ALERTER_FACTORY is not None:
+        return ALERTER_FACTORY(a)
+    import keirin_engine as E
+    import netkeirin_alert as NA
+    sender = NA.gmail_sender()
+    print('通知: メール設定あり' if sender else '通知: メール未設定（判定のみ）')
+    return NA.Alerter(E.load_model(), sender=sender, snaps=[x.strip() for x in a.alert_snaps.split(',') if x.strip()],
+                      max_per_day=a.alert_max)
+
+
 def main(argv=None, clock=None, sleep=time.sleep):
     ap = argparse.ArgumentParser(description='発走前のオッズ（全券種）を記録（私的利用のみ）')
     ap.add_argument('--out-dir', required=True, help='データ用リポジトリの data フォルダ（公開リポジトリ内は不可）')
@@ -95,6 +109,9 @@ def main(argv=None, clock=None, sleep=time.sleep):
     ap.add_argument('--offsets', default='12,4', help='発走の何分前に記録するか（カンマ区切り）')
     ap.add_argument('--flush-cmd', default='', help='定期的に実行するコマンド（コミット用）')
     ap.add_argument('--flush-min', type=float, default=60)
+    ap.add_argument('--alert', action='store_true', help='事前登録した買い方を判定してメールで知らせる（netkeirin_alert.py）')
+    ap.add_argument('--alert-snaps', default='T-6,T-4', help='判定する時点（--offsets に含めること）')
+    ap.add_argument('--alert-max', type=int, default=60, help='1日に送るメールの上限')
     a = ap.parse_args(argv)
     clock = clock or (lambda: datetime.now(N.JST))
 
@@ -110,6 +127,7 @@ def main(argv=None, clock=None, sleep=time.sleep):
             done = {(row['race_id'], row['snap']) for row in csv.DictReader(f)}
     races, listed_at, flushed_at = [], None, clock()
     stats = dict(snaps=0, failed=0)
+    alerter = make_alerter(a) if a.alert else None
 
     def flush():
         nonlocal flushed_at
@@ -147,6 +165,13 @@ def main(argv=None, clock=None, sleep=time.sleep):
                     stats['snaps'] += 1
                     n3 = sum(1 for r in rows if r['bet_type'] == '3連単' and r['odds'] != '')
                     print(f'  {nk} {snap}（発走 {st:%H:%M}）: 3連単 {n3}組')
+                    if alerter is not None:
+                        try:
+                            alerter.on_snapshot(nk, snap, st, rows, clock())
+                        except N.Blocked:
+                            raise
+                        except Exception as e:  # noqa: BLE001  判定の失敗で記録を止めない
+                            print(f'  ! 判定に失敗 {type(e).__name__}')
             if races and remaining(races, date, offsets, done_nk(), clock()) == 0:
                 print('今日の記録すべきレースは終わりました')
                 break
@@ -158,6 +183,8 @@ def main(argv=None, clock=None, sleep=time.sleep):
     finally:
         flush()
         print(f'記録 {stats["snaps"]}件 / 失敗 {stats["failed"]}件')
+        if alerter is not None:
+            print(alerter.summary())
 
 
 if __name__ == '__main__':

@@ -142,6 +142,20 @@ odds は常に倍率、ワイドは odds=最低 / odds_max=最高、的中組は
 1日4回、1回あたり約2時間。取得済みのレース（WINTICKET 由来を含む）は取り直さない。
 補充を試みた日は `data/netkeirin_backfill.json` に記録し、繰り返さない。全部埋まれば何もせず終わる。
 
+## 通知メール（netkeirin_alert.py）
+
+締切前オッズの記録（netkeirin-snapshot）の中で、発走6分前・4分前のオッズで `analysis/strategies.json` の
+`"alert": true` の買い方（2車複 EV1.10以上 / 2車複 EV1.20以上×20〜100倍 / ワイド EV1.10以上）を判定し、
+該当があれば自分宛てに Gmail で知らせる。
+
+- 設定（初回のみ）: Gmail の2段階認証をオンにして「アプリパスワード」（16文字）を作り、このリポジトリの
+  Settings → Secrets and variables → Actions → New repository secret に登録する
+  - `ALERT_GMAIL_USER` … 送信に使う Gmail アドレス
+  - `ALERT_GMAIL_APP_PASSWORD` … アプリパスワード（通常のログインパスワードではない）
+  - `ALERT_TO` … 送り先（省略時は ALERT_GMAIL_USER と同じ）
+- 未設定なら判定だけ行い、メールは送らない。1日の送信は60通まで。同じ買い目は1回だけ
+- Actions のログには件数だけを出す（レース・買い目は出さない）
+
 ## 事前登録した買い方の成績台帳（analysis/snapshot_ledger.py / .github/workflows/netkeirin-ledger.yml）
 
 `analysis/strategies.json` に登録した買い方（全券種）を、発走前に記録したオッズ（4分前が本番、12分前は参考）で判定し、
