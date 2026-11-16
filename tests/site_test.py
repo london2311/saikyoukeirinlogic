@@ -45,8 +45,8 @@ def main():
                        strategies=strategies)
     sb.set_races([(NK, '15:00'), ('209912312306', '15:30')])
     start = datetime(2099, 12, 31, 15, 0, tzinfo=JST)
-    check(sb.on_snapshot(NK, 'T-12', start, odds, start) is None, '期待値ボードの時点（15/10/5/4分前）以外は作らない')
-    for snap, mins in (('T-15', 15), ('T-10', 10), ('T-5', 5)):
+    check(sb.on_snapshot(NK, 'T-12', start, odds, start) is None, '期待値ボードの時点（締切15/10/5/2分前）以外は作らない')
+    for snap, mins in (('C-15', 20), ('C-10', 15), ('C-5', 10)):
         sb.on_snapshot(NK, snap, start, odds, start - timedelta(minutes=mins))
     sb.flush()
     check(len(pushed) == 1, '変更があれば1回だけ公開')
@@ -59,8 +59,8 @@ def main():
     meta = json.load(open(os.path.join(out, 'meta.json')))
     key = S.derive_key(PW, base64.b64decode(meta['salt']))
     race = S.decrypt(key, raw)
-    check(set(race['snaps']) == {'T-15', 'T-10', 'T-5'}, '1レースに3時点を記録')
-    s5 = race['snaps']['T-5']
+    check(set(race['snaps']) == {'C-15', 'C-10', 'C-5'}, '1レースに3時点を記録')
+    s5 = race['snaps']['C-5']
     check(set(s5['types']) == {'3連単', '2車複'}, 'オッズがある券種はすべて載せる（架空レースのオッズは3連単・2車複のみ）')
     check(len(s5['types']['3連単']) == 210 and len(s5['types']['2車複']) == 21, '全組（7車: 3連単210・2車複21）')
     evs = [x[3] for x in s5['types']['2車複']]
@@ -69,7 +69,7 @@ def main():
     check(top[0] == '1-2' and top[3] >= 1.1, f'割安な 2車複 1=2 が先頭 {top}')
     check(any(x[0] == 'Q110' and x[3] == '1-2' for x in s5['strat']), '事前登録した買い方の該当（★）を付ける')
     idx = S.decrypt(key, open(os.path.join(out, 'index.enc'), 'rb').read())
-    check(set(idx['races']) == {'052320991231', '062320991231'} and idx['races']['052320991231']['snaps'] == ['T-15', 'T-10', 'T-5'],
+    check(set(idx['races']) == {'052320991231', '062320991231'} and idx['races']['052320991231']['snaps'] == ['C-15', 'C-10', 'C-5'] and idx['races']['052320991231']['deadline'] == '14:55',
           '一覧に今日の全レースと記録済みの時点')
     try:
         S.decrypt(S.derive_key('wrong password!!', base64.b64decode(meta['salt'])), raw)
@@ -87,7 +87,7 @@ def main():
     if shutil.which('node'):
         out2 = tempfile.mkdtemp()
         sb3 = S.SiteBuilder(E.load_model(), PW, out2, '20991231', cards_fn=lambda nk: cards)
-        sb3.on_snapshot(NK, 'T-5', start, odds, start - timedelta(minutes=5))
+        sb3.on_snapshot(NK, 'C-5', start, odds, start - timedelta(minutes=10))
         sb3.flush()
         js = r"""
 const fs = require('fs'); const { subtle } = globalThis.crypto;
@@ -101,7 +101,7 @@ const fs = require('fs'); const { subtle } = globalThis.crypto;
   const plain = await subtle.decrypt({ name: 'AES-GCM', iv: u.slice(0, 12) }, key, u.slice(12));
   const ds = new Blob([plain]).stream().pipeThrough(new DecompressionStream('deflate'));
   const obj = JSON.parse(await new Response(ds).text());
-  console.log(obj.venue + ' ' + obj.rn + 'R ' + obj.snaps['T-5'].types['2車複'][0][0]);
+  console.log(obj.venue + ' ' + obj.rn + 'R ' + obj.snaps['C-5'].types['2車複'][0][0]);
 })().catch(e => { console.error(e); process.exit(1); });
 """
         r = subprocess.run(['node', '-e', js, out2, PW], capture_output=True, text=True)

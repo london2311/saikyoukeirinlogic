@@ -3,7 +3,7 @@
 """
 netkeirin_site.py — 個人閲覧用の「期待値ボード」のデータを作る（私的利用のみ・暗号化して置く）
 
-netkeirin_snapshot.py から呼ばれる。発走15分前・10分前・5分前（と4分前）に記録したオッズで、
+netkeirin_snapshot.py から呼ばれる。締切15分前・10分前・5分前・2分前に記録したオッズで、
 全券種・全組の「当たる確率（v105 融合）・今のオッズ・期待値（EV）・買い基準オッズ」を計算し、
 レースごとの JSON を **AES-256-GCM で暗号化**して、このリポジトリの site-data ブランチに置く。
 閲覧ページ（live/index.html）は、入力したパスワードでブラウザの中だけで復号して表示する。
@@ -26,7 +26,7 @@ from pathlib import Path
 import keirin_collector as KC
 
 ITER = 200_000
-SITE_SNAPS = ('T-15', 'T-10', 'T-5', 'T-4')
+SITE_SNAPS = ('C-15', 'C-10', 'C-5', 'C-2')  # 締切の15・10・5・2分前
 TYPES = ['2車複', 'ワイド', '3連複', '2車単', '3連単']
 VALIDATED = {'2車複', 'ワイド'}  # 過去の検証で EV 買いがプラスだった券種（他は参考）
 
@@ -100,8 +100,10 @@ class SiteBuilder:
             wt = KC_wt(nk)
             r = self.index['races'].get(wt)
             if r is None:
+                import netkeirin_collector as N
+                dl = N.deadline_dt(self.date, nk, hhmm)
                 self.index['races'][wt] = dict(venue=KC.VENUE_NAMES.get(nk[8:10], nk[8:10]), rn=int(nk[10:12]), start=hhmm,
-                                               snaps=[], best=None)
+                                               deadline=f'{dl:%H:%M}' if dl else '', snaps=[], best=None)
                 changed = True
             elif hhmm and r.get('start') != hhmm:
                 r['start'] = hhmm
@@ -119,8 +121,10 @@ class SiteBuilder:
                 self.cards[nk] = None
         return self.cards[nk]
 
-    def on_snapshot(self, nk, snap, start, odds_rows, now):
+    def on_snapshot(self, nk, snap, start, odds_rows, now, deadline=None):
         import keirin_engine as E
+        from datetime import timedelta
+        deadline = deadline or (start - timedelta(minutes=5))
         if snap not in SITE_SNAPS:
             return None
         cards = self._cards(nk)
@@ -146,6 +150,7 @@ class SiteBuilder:
             for s in self.strategies:
                 for t in L.select(s, res['tickets']):
                     strat.append([s['id'], s['label'], t['type'], t['key'], t['odds'], round(t['ev'], 3), buy_line(t['prob'], s.get('min', 1.10))])
+        groups = self._groups(res, cards) if res.get('market_ok') else {}
         riders = []
         for r in sorted(cards, key=lambda x: int(x['car_number'])):
             if str(r.get('absent', 0)) in ('1', 'True', 'true'):
@@ -154,11 +159,13 @@ class SiteBuilder:
                            r.get('style', ''), r.get('line', '') or r.get('line_order', '')])
         win = {x['num']: round(x['win'], 4) for x in res.get('riders', [])}
         race = self._load(f'{wt}.enc') or dict(id=wt, venue=venue, rn=int(nk[10:12]), start=f'{start:%H:%M}', snaps={})
+        race['deadline'] = f'{deadline:%H:%M}'
         race['riders'] = riders
         race['snaps'][snap] = dict(at=f'{now:%H:%M:%S}', market_ok=bool(res.get('market_ok')), win=win, types=types,
-                                   hits=hits, strat=strat)
+                                   hits=hits, strat=strat, groups=groups)
         self._save(f'{wt}.enc', race)
         ent = self.index['races'].setdefault(wt, dict(venue=venue, rn=int(nk[10:12]), start=f'{start:%H:%M}', snaps=[], best=None))
+        ent['deadline'] = f'{deadline:%H:%M}'
         if snap not in ent['snaps']:
             ent['snaps'].append(snap)
         best = []
@@ -166,11 +173,73 @@ class SiteBuilder:
             rows = [x for x in types.get(bt, []) if x[1] >= 0.005 and x[2] <= 300]
             if rows:
                 best.append([bt, rows[0][0], rows[0][2], rows[0][3]])
-        ent['best'] = dict(snap=snap, rows=best, strat=len(strat))
+        grp = sum(1 for bt, v in groups.items() for g in v.get('ev', []) if max(g[4], g[11] if len(g) > 11 else 0) >= 1.10)
+        ent['best'] = dict(snap=snap, rows=best, strat=len(strat), grp=grp)
         self.index['updated'] = f'{now:%Y-%m-%d %H:%M:%S}'
         self.dirty = True
         self.stats['updates'] += 1
         return race
+
+    @staticmethod
+    def _lines(cards):
+        lines = {}
+        for r in cards:
+            if str(r.get('absent', 0)) in ('1', 'True', 'true'):
+                continue
+            single = str(r.get('is_single', '')) in ('1', '1.0', 'True', 'true')
+            lid = f's{r["car_number"]}' if single or not r.get('line_order') else str(r.get('line_order'))
+            try:
+                pos = int(float(r.get('line_position') or 1))
+            except ValueError:
+                pos = 1
+            lines.setdefault(lid, []).append((pos, int(r['car_number'])))
+        return [[c for _, c in sorted(v)] for v in lines.values()]
+
+    def _groups(self, res, cards):
+        """券種ごとの買い目群（流し・フォーメーション・BOX・ライン決着）: 期待値重視（的中率10%以上）と的中率重視（30%以上）"""
+        import formations as F
+        probs, odds = {}, {}
+        for t in res.get('tickets', []):
+            probs.setdefault(t['type'], {})[t['key']] = t['prob']
+            odds.setdefault(t['type'], {})[t['key']] = t['odds']
+        if '3連単' not in probs:
+            return {}
+        dist3 = {tuple(int(x) for x in k.split('-')): p for k, p in probs['3連単'].items()}
+        gs = F.build_groups(probs, odds, self._lines(cards), dist3)
+        out = {}
+        for bt in TYPES:
+            gb = [g for g in gs if g['type'] == bt]
+            if not gb:
+                continue
+
+            def core(g):
+                ev_r, st = F.realized_ev(g, probs, odds)
+                return [g['n'], round(g['p'], 4), round(g['odds'], 2) if g['odds'] else None, round(g['ev'], 3),
+                        round(ev_r, 3), [[k, s, odds[bt][k]] for k, s in zip(g['keys'], st)]]
+
+            def ranked(p_floor, top):
+                """的中率の下限を満たす群を、「切った後」も含めた期待値の高い順に。切り案があれば添える"""
+                items = []
+                for g in gb:
+                    if g['p'] < p_floor:
+                        continue
+                    pr = F.prune(g, probs, odds, p_floor, dist3)
+                    if pr and pr['ev'] <= g['ev'] + 0.005:
+                        pr = None
+                    items.append((max(g['ev'], pr['ev'] if pr else 0), g, pr))
+                items.sort(key=lambda x: (-x[0], x[1]['n']))
+                out_rows, seen = [], set()
+                for _, g, pr in items:
+                    sig = frozenset(pr['keys'] if pr else g['keys'])
+                    if sig in seen:  # 切った結果が同じ買い目になる群は1つだけ
+                        continue
+                    seen.add(sig)
+                    out_rows.append([g['label']] + core(g) + ([pr['cut']] + core(pr) if pr else []))
+                    if len(out_rows) >= top:
+                        break
+                return out_rows
+            out[bt] = dict(ev=ranked(0.10, 6), hit=ranked(0.30, 4))
+        return out
 
     def flush(self, force=False):
         """index を書き出して push（変更がある時だけ）"""

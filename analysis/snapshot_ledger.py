@@ -113,7 +113,7 @@ def evaluate_day(model, strategies, data: Path, date: str):
             if not res.get('ok') or not res.get('market_ok'):
                 continue
             for s in strategies:
-                if date < s['registered'] or snap not in s.get('snaps', ['T-4']):
+                if date < s['registered'] or snap not in s.get('snaps', ['C-2']):
                     continue
                 for t in select(s, res['tickets']):
                     rows.append(dict(date=date, race_id=rid, venue=venue.get(rid, ''), snap=snap, strategy=s['id'],
@@ -143,11 +143,11 @@ def report(ledger, strategies, races_by_date):
     if ledger:
         dates = sorted({r['date'] for r in ledger} | set(races_by_date))
         L.append(f'- 期間: {dates[0]}〜{dates[-1]}（{len(dates)}日、判定できたレース {sum(races_by_date.values())}）')
-    L.append('- 1点100円。90%区間はレース単位のブートストラップ。T-4 = 発走4分前のオッズで判定（本番）、T-12 = 12分前（参考）\n')
+    L.append('- 1点100円。90%区間はレース単位のブートストラップ。C-2 = 締切2分前のオッズで判定（本番）、C-10 = 締切10分前（参考）。締切は発走の5分前\n')
     L.append('| 買い方 | 時点 | 登録日 | 点数 | 的中 | 的中率 | 回収率 | 90%区間 | 収支 | 最大連敗(点) |')
     L.append('|---|---|---|---:|---:|---:|---:|---|---:|---:|')
     for s in strategies:
-        for snap in s.get('snaps', ['T-4']):
+        for snap in s.get('snaps', ['C-2']):
             g = [r for r in ledger if r['strategy'] == s['id'] and r['snap'] == snap]
             n = len(g)
             stake = [float(r['stake']) for r in g]

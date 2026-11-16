@@ -3,7 +3,7 @@
 """
 netkeirin_alert.py — 発走前のオッズで事前登録した買い方を判定し、該当があれば自分宛てにメールで知らせる（私的利用のみ）
 
-netkeirin_snapshot.py から呼ばれる（--alert-snaps で指定した時点、既定は 発走5分前・4分前）。
+netkeirin_snapshot.py から呼ばれる（--alert-snaps で指定した時点、既定は 締切5分前・2分前）。
   * 判定する買い方: analysis/strategies.json で "alert": true のもの
   * 出走表は各レース1回だけ取得（1リクエスト）。オッズは記録用に取ったものをそのまま使う
   * 同じレース・同じ買い目は1回だけ知らせる。1日の送信は --alert-max 通まで
@@ -53,7 +53,7 @@ def buy_line(p, ev_min):
 
 
 class Alerter:
-    def __init__(self, model, sender=None, cards_fn=None, snaps=('T-5', 'T-4'), max_per_day=60, strategies_path=STRATEGIES):
+    def __init__(self, model, sender=None, cards_fn=None, snaps=('C-5', 'C-2'), max_per_day=60, strategies_path=STRATEGIES):
         import snapshot_ledger as L
         self.L = L
         self.model = model
@@ -72,7 +72,7 @@ class Alerter:
         import netkeirin_collector as N
         return N.parse_racecard(N.fetch(f'{N.BASE_URL}/race/entry/', {'race_id': nk}), nk)
 
-    def on_snapshot(self, nk, snap, start, odds_rows, now):
+    def on_snapshot(self, nk, snap, start, odds_rows, now, deadline=None):
         """記録した時点のオッズで判定し、新しい該当があればメールを送る。送った買い目の一覧を返す"""
         import keirin_engine as E
         if snap not in self.snaps or not self.strategies:
@@ -106,11 +106,13 @@ class Alerter:
         if self.stats['mails'] >= self.max:
             self.stats['skipped_cap'] += 1
             return new
-        mins = max(0, int((start - now).total_seconds() // 60))
+        from datetime import timedelta
+        deadline = deadline or (start - timedelta(minutes=5))
+        mins = max(0, int((deadline - now).total_seconds() // 60))
         title = f'{venue}{int(nk[10:12])}R'
-        subject = f'【競輪通知】{title}（発走 {start:%H:%M}）' + ' / '.join(
+        subject = f'【競輪通知】{title}（締切 {deadline:%H:%M}）' + ' / '.join(
             f'{t["type"]} {t["key"].replace("-", "=")}' for _, t in new[:3]) + (' ほか' if len(new) > 3 else '')
-        lines = [f'{title}  発走 {start:%H:%M}（あと約{mins}分・{snap} のオッズで判定）', '']
+        lines = [f'{title}  締切 {deadline:%H:%M}（締切まであと約{mins}分・発走 {start:%H:%M}・{snap} のオッズで判定）', '']
         for s, t in new:
             line = buy_line(t['prob'], s.get('min', 1.10))
             band = ''

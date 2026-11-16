@@ -37,27 +37,27 @@ def main():
     al = NA.Alerter(E.load_model(), sender=lambda s, b: mails.append((s, b)), cards_fn=cards_fn)
     check({s['id'] for s in al.strategies} == {'Q110', 'Q120M', 'W110'}, '通知の対象は strategies.json の alert の買い方')
     start = datetime(2099, 12, 31, 15, 0, tzinfo=JST)
-    got = al.on_snapshot(NK, 'T-12', start, odds, start - timedelta(minutes=12))
-    check(got == [] and mails == [], '通知の時点（T-5/T-4）以外では判定しない')
-    got = al.on_snapshot(NK, 'T-5', start, odds, start - timedelta(minutes=5))
+    got = al.on_snapshot(NK, 'C-10', start, odds, start - timedelta(minutes=15))
+    check(got == [] and mails == [], '通知の時点（締切5分前・2分前）以外では判定しない')
+    got = al.on_snapshot(NK, 'C-5', start, odds, start - timedelta(minutes=10))
     keys = {(t['type'], t['key']) for _, t in got}
     check(('2車複', '1-2') in keys, f'割安な 2車複 1=2 を通知 {sorted(keys)}')
     check(len(mails) == 1, '1レースの該当はメール1通にまとめる')
     subj, body = mails[0]
-    check('取手5R' in subj and '2車複 1=2' in subj and '15:00' in subj, f'件名にレース・買い目・発走時刻 {subj}')
-    check('倍以上なら買い' in body and 'あと約5分' in body, '本文に買い基準オッズと残り時間')
-    al.on_snapshot(NK, 'T-4', start, odds, start - timedelta(minutes=4))
+    check('取手5R' in subj and '2車複 1=2' in subj and '14:55' in subj, f'件名にレース・買い目・締切時刻（発走5分前） {subj}')
+    check('倍以上なら買い' in body and '締切まであと約5分' in body, '本文に買い基準オッズと残り時間')
+    al.on_snapshot(NK, 'C-2', start, odds, start - timedelta(minutes=7))
     check(len(mails) == 1, '同じ買い目は2回知らせない')
     check(card_calls == [NK], '出走表はレースごとに1回だけ取得')
     check(NA.buy_line(0.05, 1.10) == 22.0 and NA.buy_line(0.034, 1.10) == 32.4, '買い基準オッズ = 1.10 ÷ 確率（0.1倍切り上げ）')
 
     # メール未設定（sender=None）でも判定は動き、送らない
     al2 = NA.Alerter(E.load_model(), sender=None, cards_fn=lambda nk: cards)
-    got = al2.on_snapshot(NK, 'T-5', start, odds, start - timedelta(minutes=5))
+    got = al2.on_snapshot(NK, 'C-5', start, odds, start - timedelta(minutes=10))
     check(got and al2.stats['mails'] == 0 and '未設定' in al2.summary(), 'メール未設定なら判定のみ')
     # 上限
     al3 = NA.Alerter(E.load_model(), sender=lambda s, b: mails.append((s, b)), cards_fn=lambda nk: cards, max_per_day=0)
-    al3.on_snapshot(NK, 'T-5', start, odds, start - timedelta(minutes=5))
+    al3.on_snapshot(NK, 'C-5', start, odds, start - timedelta(minutes=10))
     check(al3.stats['skipped_cap'] == 1 and al3.stats['mails'] == 0, '1日の上限を超えたら送らない')
     # 環境変数が無ければ送信関数を作らない
     for k in ('ALERT_GMAIL_USER', 'ALERT_GMAIL_APP_PASSWORD'):

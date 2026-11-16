@@ -9,8 +9,9 @@ netkeirin_snapshot.py — 発走前のオッズ（全券種）を決まった時
 結果ページの最終オッズは締切後の値で、実際に買う時点のオッズとは違う。
 
   * 今日のレース一覧（発走時刻つき）を 30 分ごとに取り直す（発走の遅れ・変更に追従）
-  * 各レースの発走 --offsets 分前（既定 12分前と4分前）に、オッズ API を 1 回ずつ呼ぶ
-    （1レースあたり 2 リクエスト。間隔は netkeirin_collector.REQUEST_INTERVAL のまま）
+  * 基準は **締切**（一覧に締切時刻があればそれ、無ければ発走の5分前）。各レースの締切 --offsets 分前
+    （既定 15・10・5・2分前）に、オッズ API を 1 回ずつ呼ぶ。時点の名前は C-15 / C-10 / C-5 / C-2
+    （1レースあたり 4 リクエスト。間隔は netkeirin_collector.REQUEST_INTERVAL のまま）
   * 保存先: data/YYYY/odds_snap/snap_YYYYMMDD.csv（枠番の券種は保存しない）
   * --until（JST の時:分、24:20 のように翌日も可）を過ぎるか、記録すべきレースが無くなったら終了
   * --flush-cmd を指定すると、--flush-min 分ごとと終了時に実行する（データ用リポジトリへのコミット用）
@@ -26,10 +27,10 @@ import keirin_collector as KC
 import netkeirin_collector as N
 
 KEEP_TYPES = {'3連単', '3連複', '2車単', '2車複', 'ワイド'}
-FIELDS = ['race_id', 'date', 'race_number', 'snap', 'snap_at', 'start_at', 'official_dt',
+FIELDS = ['race_id', 'date', 'race_number', 'snap', 'snap_at', 'start_at', 'deadline_at', 'official_dt',
           'bet_type', 'combination', 'odds', 'odds_max', 'popularity', 'absent']
 LIST_REFRESH_MIN = 30
-LATE_MIN = 3
+LATE_MIN = 2  # 締切直前以外の時点は、予定からこの分数以上遅れたら取らない
 
 
 def parse_until(date: str, hhmm: str) -> datetime:
@@ -37,7 +38,7 @@ def parse_until(date: str, hhmm: str) -> datetime:
     return datetime.strptime(date, '%Y%m%d').replace(tzinfo=N.JST) + timedelta(hours=h, minutes=m)
 
 
-def snapshot_rows(resp: dict, nk: str, snap: str, snap_at: datetime, start: datetime) -> list:
+def snapshot_rows(resp: dict, nk: str, snap: str, snap_at: datetime, start: datetime, deadline: datetime = None) -> list:
     body = (resp.get('data') or {}).get(f'nkrace_odds::{nk}') or {}
     official = str(body.get('official_dt', '')) if isinstance(body, dict) else ''
     rows = []
@@ -47,6 +48,7 @@ def snapshot_rows(resp: dict, nk: str, snap: str, snap_at: datetime, start: date
         rows.append({
             'race_id': r['race_id'], 'date': r['date'], 'race_number': r['race_number'], 'snap': snap,
             'snap_at': snap_at.strftime('%Y-%m-%d %H:%M:%S'), 'start_at': start.strftime('%Y-%m-%d %H:%M'),
+            'deadline_at': deadline.strftime('%Y-%m-%d %H:%M') if deadline else '',
             'official_dt': official, 'bet_type': r['bet_type'], 'combination': r['combination'],
             'odds': r['odds'], 'odds_max': r['odds_max'], 'popularity': r['popularity'], 'absent': r['absent'],
         })
@@ -60,30 +62,31 @@ def fetch_snapshot(nk: str) -> dict:
 
 
 def due_jobs(races: list, date: str, offsets: list, done: set, now: datetime) -> list:
-    """今記録すべき (race_id, snap名, 発走時刻)。発走時刻 − offset 分を過ぎ、まだ発走 1 分前より前のもの。"""
+    """今記録すべき (race_id, snap名, 発走時刻, 締切時刻)。締切 − offset 分を過ぎ、まだ締切前のもの。"""
     jobs = []
     for nk, hhmm in races:
         st = N.start_dt(date, hhmm)
-        if st is None:
+        dl = N.deadline_dt(date, nk, hhmm)
+        if st is None or dl is None:
             continue
         for off in offsets:
-            snap = f'T-{off}'
+            snap = f'C-{off}'
             if (nk, snap) in done:
                 continue
             # 一番遅い記録以外は、予定から LATE_MIN 分以上遅れたら取らない（別の時点と混ざらないように）
-            late_ok = off == min(offsets) or now < st - timedelta(minutes=off - LATE_MIN)
-            if st - timedelta(minutes=off) <= now < st - timedelta(minutes=1) and late_ok:
-                jobs.append((st - timedelta(minutes=off), nk, snap, st))
-    return [(nk, snap, st) for _, nk, snap, st in sorted(jobs)]
+            late_ok = off == min(offsets) or now < dl - timedelta(minutes=off - LATE_MIN)
+            if dl - timedelta(minutes=off) <= now < dl and late_ok:
+                jobs.append((dl - timedelta(minutes=off), nk, snap, st, dl))
+    return [(nk, snap, st, dl) for _, nk, snap, st, dl in sorted(jobs)]
 
 
 def remaining(races: list, date: str, offsets: list, done: set, now: datetime) -> int:
     n = 0
     for nk, hhmm in races:
-        st = N.start_dt(date, hhmm)
-        if st is None or st - timedelta(minutes=1) <= now:
+        dl = N.deadline_dt(date, nk, hhmm)
+        if dl is None or dl <= now:
             continue
-        n += sum((nk, f'T-{off}') not in done for off in offsets)
+        n += sum((nk, f'C-{off}') not in done for off in offsets)
     return n
 
 
@@ -134,11 +137,11 @@ def main(argv=None, clock=None, sleep=time.sleep):
     ap.add_argument('--out-dir', required=True, help='データ用リポジトリの data フォルダ（公開リポジトリ内は不可）')
     ap.add_argument('--date', default=None, help='既定: 今日（JST）')
     ap.add_argument('--until', default='24:20', help='この時刻（JST）で終了。翌日は 24:20 のように書く')
-    ap.add_argument('--offsets', default='12,4', help='発走の何分前に記録するか（カンマ区切り）')
+    ap.add_argument('--offsets', default='15,10,5,2', help='締切の何分前に記録するか（カンマ区切り）')
     ap.add_argument('--flush-cmd', default='', help='定期的に実行するコマンド（コミット用）')
     ap.add_argument('--flush-min', type=float, default=60)
     ap.add_argument('--alert', action='store_true', help='事前登録した買い方を判定してメールで知らせる（netkeirin_alert.py）')
-    ap.add_argument('--alert-snaps', default='T-5,T-4', help='判定する時点（--offsets に含めること）')
+    ap.add_argument('--alert-snaps', default='C-5,C-2', help='判定する時点（--offsets に含めること）')
     ap.add_argument('--alert-max', type=int, default=60, help='1日に送るメールの上限')
     ap.add_argument('--site', action='store_true', help='期待値ボード（暗号化）のデータを作って site-data ブランチに置く（netkeirin_site.py）')
     ap.add_argument('--site-dir', default='_site_out', help='期待値ボードのデータの作業フォルダ（公開側には入れない）')
@@ -168,7 +171,7 @@ def main(argv=None, clock=None, sleep=time.sleep):
         flushed_at = clock()
 
     def done_nk():
-        return {(nk, s) for nk, _ in races for s in (f'T-{o}' for o in offsets) if (N.to_wt_race_id(nk), s) in done}
+        return {(nk, s) for nk, _ in races for s in (f'C-{o}' for o in offsets) if (N.to_wt_race_id(nk), s) in done}
 
     try:
         while clock() < until:
@@ -183,12 +186,12 @@ def main(argv=None, clock=None, sleep=time.sleep):
                 except (N.HTTPError, N.URLError, ValueError) as e:
                     print(f'[{now:%H:%M}] レース一覧の取得に失敗 {type(e).__name__}')
                     listed_at = now - timedelta(minutes=LIST_REFRESH_MIN - 5)
-            for nk, snap, st in due_jobs(races, date, offsets, done_nk(), clock()):
-                if clock() >= st - timedelta(minutes=1):
+            for nk, snap, st, dl in due_jobs(races, date, offsets, done_nk(), clock()):
+                if clock() >= dl:
                     continue
                 t = clock()
                 try:
-                    rows = snapshot_rows(fetch_snapshot(nk), nk, snap, t, st)
+                    rows = snapshot_rows(fetch_snapshot(nk), nk, snap, t, st, dl)
                 except (N.HTTPError, N.URLError, ValueError, KeyError, TypeError) as e:
                     stats['failed'] += 1
                     print(f'  ! {nk} {snap}: 失敗 {type(e).__name__}')
@@ -198,17 +201,17 @@ def main(argv=None, clock=None, sleep=time.sleep):
                     KC.append_csv(path, rows, ['race_id', 'snap', 'bet_type', 'combination'])
                     stats['snaps'] += 1
                     n3 = sum(1 for r in rows if r['bet_type'] == '3連単' and r['odds'] != '')
-                    print(f'  {nk} {snap}（発走 {st:%H:%M}）: 3連単 {n3}組')
+                    print(f'  {nk} {snap}（締切 {dl:%H:%M}）: 3連単 {n3}組')
                     if alerter is not None:
                         try:
-                            alerter.on_snapshot(nk, snap, st, rows, clock())
+                            alerter.on_snapshot(nk, snap, st, rows, clock(), deadline=dl)
                         except N.Blocked:
                             raise
                         except Exception as e:  # noqa: BLE001  判定の失敗で記録を止めない
                             print(f'  ! 判定に失敗 {type(e).__name__}')
                     if site is not None:
                         try:
-                            site.on_snapshot(nk, snap, st, rows, clock())
+                            site.on_snapshot(nk, snap, st, rows, clock(), deadline=dl)
                         except N.Blocked:
                             raise
                         except Exception as e:  # noqa: BLE001
