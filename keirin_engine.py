@@ -259,7 +259,7 @@ def analyze(model, cards, odds_rows, venue_name, settings=None):
                 alpha=model['alpha'], beta=model['beta'], ken=not bets, bets=bets,
                 portfolio=dict(stake=stake, exp_return=exp_ret, roi=exp_ret / stake if stake else 0.0, hit_prob=hit_prob,
                                max_pay=float(pay.max()) if bets else 0.0),
-                hit_picks=hit_picks, riders=rider_rows,
+                hit_picks=hit_picks, riders=rider_rows, tickets=tickets,
                 top_outcomes=[dict(key=keys[i], prob=float(f[i])) for i in np.argsort(-f)[:5]])
 
 

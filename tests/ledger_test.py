@@ -1,0 +1,76 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+analysis/snapshot_ledger.py のオフラインテスト（架空の1日・通信なし）:  python tests/ledger_test.py
+"""
+import csv
+import json
+import os
+import sys
+import tempfile
+from pathlib import Path
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, ROOT)
+sys.path.insert(0, os.path.join(ROOT, 'analysis'))
+sys.path.insert(0, os.path.join(ROOT, 'tests'))
+import keirin_collector as C  # noqa: E402
+import now_test as NT  # noqa: E402  架空レース（7車・2車複 1=2 が割安）
+import snapshot_ledger as L  # noqa: E402
+
+DATE = '20991231'
+RID = '012320991231'
+
+
+def write(path, rows):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, 'w', newline='', encoding='utf-8') as f:
+        w = csv.DictWriter(f, fieldnames=list(rows[0]))
+        w.writeheader()
+        w.writerows(rows)
+
+
+def check(c, msg):
+    if not c:
+        raise SystemExit(f'NG   {msg}')
+    print(f'OK   {msg}')
+
+
+def main():
+    _, _, full, _ = NT.build_states()
+    cards = C.parse_racecard(full)
+    odds = C.parse_odds(full)
+    data = Path(tempfile.mkdtemp())
+    y = data / '2099'
+    snap = [dict(race_id=RID, date=DATE, race_number=5, snap=s, snap_at='', start_at='', official_dt='',
+                 bet_type=o['bet_type'], combination=o['combination'], odds=o['odds'], odds_max=o.get('odds_max', ''),
+                 popularity='', absent=0) for s in ('T-4', 'T-12') for o in odds]
+    write(y / 'odds_snap' / f'snap_{DATE}.csv', snap)
+    write(y / 'racecards.csv', [dict(r, race_id=RID) for r in cards])
+    write(y / 'races.csv', [dict(race_id=RID, date=DATE, venue_name='取手', cancel=0)])
+    write(y / 'payoffs.csv', [dict(race_id=RID, bet_type='2車複', combination='1-2', payoff=900, popularity=1)])
+    strat = Path(tempfile.mkdtemp()) / 's.json'
+    strat.write_text(json.dumps({'strategies': [
+        dict(id='Q1', label='2車複 EV1.10以上', bet_type='2車複', signal='EV_f', min=1.10, registered='20990101',
+             snaps=['T-4', 'T-12']),
+        dict(id='F1', label='未来に登録', bet_type='2車複', signal='EV_f', min=1.10, registered='21000101'),
+    ]}, ensure_ascii=False), encoding='utf-8')
+
+    L.main(['--data', str(data), '--strategies', str(strat)])
+    led = list(csv.DictReader(open(data / 'ledger' / 'ledger.csv', encoding='utf-8')))
+    check([(r['strategy'], r['snap'], r['key']) for r in led] == [('Q1', 'T-4', '1-2'), ('Q1', 'T-12', '1-2')] or
+          sorted((r['strategy'], r['snap'], r['key']) for r in led) == [('Q1', 'T-12', '1-2'), ('Q1', 'T-4', '1-2')],
+          f'割安な 2車複 1=2 を両時点で記録 {[(r["strategy"], r["snap"], r["key"]) for r in led]}')
+    check(all(float(r['payoff']) == 900 for r in led), '実際の払戻を付ける')
+    check(not any(r['strategy'] == 'F1' for r in led), '登録日より前のレースは数えない（後出し防止）')
+    rep = (data / 'ledger' / 'report.md').read_text(encoding='utf-8')
+    check('Q1' in rep and '900.0%' in rep, '成績表に回収率を出す')
+
+    L.main(['--data', str(data), '--strategies', str(strat)])
+    led2 = list(csv.DictReader(open(data / 'ledger' / 'ledger.csv', encoding='utf-8')))
+    check(len(led2) == len(led), '同じ日を二重に数えない')
+    print('\n全テスト成功')
+
+
+if __name__ == '__main__':
+    main()

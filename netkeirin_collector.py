@@ -65,6 +65,7 @@ SOURCE = "netkeirin"
 # ページと同じ呼び出し方（POST, class=AplRaceOdds, method=get）で取得する。
 ODDS_API = f"{BASE_URL}/api/race/"
 # 応答の list_N → 券種（N は netkeirin の式別コード。払戻と突き合わせて確認済み）
+PLACEHOLDER_ODDS = 9999.9  # 投票が集まる前は全組がこの倍率で表示される
 ODDS_LISTS = {"list_3": "枠複", "list_4": "枠単", "list_5": "2車複", "list_6": "2車単",
               "list_7": "ワイド", "list_8": "3連複", "list_9": "3連単"}
 
@@ -254,6 +255,43 @@ def list_races(date: str) -> list:
         params["jyocd"] = v
         ids |= set(parse_race_ids(fetch(f"{BASE_URL}/race/api_race_list.html", params), date, v))
     return sorted(ids)
+
+
+def parse_race_list(list_html: str, date: str) -> list:
+    """レース一覧 API の応答 → [(race_id, 発走 'HH:MM'), ...]"""
+    out = {}
+    for m in re.finditer(r'<li id\s*=\s*"racing_color_(\d{12})"(.*?)(?=<li id\s*=\s*"racing_color_|\Z)', list_html, flags=re.S):
+        rid, body = m.group(1), m.group(2)
+        if rid[:8] != date:
+            continue
+        st = re.search(r'発走\s*(\d{1,2}:\d{2})', body)
+        out[rid] = st.group(1) if st else ''
+    return sorted(out.items())
+
+
+def list_today(date: str, venue: str = None) -> list:
+    params = {'pid': 'api_race_list', 'input': 'UTF-8', 'output': 'html',
+              'kaisai_date': date, 'jyocd': venue or '', 'link_mode': ''}
+    first = fetch(f'{BASE_URL}/race/api_race_list.html', params)
+    races = dict(parse_race_list(first, date))
+    if not venue:
+        have = {r[8:10] for r in races}
+        for v in parse_venue_codes(first):
+            if v in have:
+                continue
+            params['jyocd'] = v
+            races.update(parse_race_list(fetch(f'{BASE_URL}/race/api_race_list.html', params), date))
+    elif venue:
+        races = {k: v for k, v in races.items() if k[8:10] == venue}
+    return sorted(races.items())
+
+
+def start_dt(date: str, hhmm: str):
+    if not hhmm:
+        return None
+    h, m = map(int, hhmm.split(':'))
+    return datetime.strptime(date, '%Y%m%d').replace(tzinfo=JST) + timedelta(hours=h, minutes=m)
+
 
 
 # ---------------------------------------------------------------- 出走表
@@ -538,6 +576,7 @@ def parse_odds_api(resp: dict, nk_race_id: str, payoffs: list = None) -> list:
     各要素 = [組み合わせ, 倍率（ワイドは最低）, 最高倍率（ワイドのみ、他は0）, 人気順]。
     odds は常に倍率、ワイドは odds=最低 / odds_max=最高、的中組の払戻は payoff 列。
     倍率が 0 以下（欠車を含む組など）は odds を空欄・absent=1 にする。
+    9999.9倍（発売前・投票なしの仮表示）は odds を空欄にする（absent=0）。
     """
     if not isinstance(resp, dict) or resp.get("status") == "NG":
         raise ValueError("オッズ API の応答が NG")
@@ -557,6 +596,8 @@ def parse_odds_api(resp: dict, nk_race_id: str, payoffs: list = None) -> list:
             absent = 0
             if lo == "" or lo <= 0:
                 lo, hi, absent = "", "", 1
+            elif lo >= PLACEHOLDER_ODDS:
+                lo, hi = "", ""  # 発売前・投票なしの仮表示（9999.9倍）は実際のオッズではない
             if hi != "" and hi <= 0:
                 hi = ""
             p = win.get((bet, combo))
@@ -581,12 +622,17 @@ def fetch_odds(nk_race_id: str, payoffs: list) -> list:
 # ---------------------------------------------------------------- メイン
 
 
-def collect_date(date: str, out_dir: Path) -> dict:
+def collect_date(date: str, out_dir: Path, skip: set = None) -> dict:
+    """skip: 取得済みのレースID（WINTICKET 形式）。過去分の補充で、既にあるレースを取り直さないために使う。"""
     print(f"=== {date} の収集（netkeirin） ===")
     KC.DATA_DIR = out_dir  # append_odds_csv の保存先
     race_ids = list_races(date)
     print(f"レース数（一覧）: {len(race_ids)} / 開催場数: {len({r[8:10] for r in race_ids})}")
-    stats = dict(races=0, failed=0, no_result=0, odds_races=0, odds_failed=0)
+    if skip:
+        before = len(race_ids)
+        race_ids = [r for r in race_ids if to_wt_race_id(r) not in skip]
+        print(f"取得済みのため省略: {before - len(race_ids)}")
+    stats = dict(races=0, failed=0, no_result=0, odds_races=0, odds_failed=0, listed=len(race_ids))
     metas, cards, orders, payoffs, odds = [], [], [], [], []
     for nk in race_ids:
         try:

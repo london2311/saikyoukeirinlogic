@@ -1,0 +1,62 @@
+# 事前登録した買い方（analysis/strategies.json）を、発走前に記録したオッズで判定し、
+# 実際の払戻と合わせて台帳（成績）に積み上げる。台帳と成績表は非公開のデータ用リポジトリにだけ保存する。
+#   保存先: <DATA_REPO>/data/ledger/ledger.csv, report.md
+name: netkeirin-ledger
+
+on:
+  schedule:
+    - cron: "53 22 * * *"   # 毎日 07:53 JST（前日分の結果の収集後）
+  workflow_dispatch:
+
+permissions:
+  contents: read   # 公開リポジトリには書き込まない
+
+concurrency:
+  group: netkeirin-ledger
+  cancel-in-progress: false
+
+jobs:
+  ledger:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: 設定の確認
+        id: cfg
+        env:
+          DATA_REPO: ${{ vars.DATA_REPO }}
+          HAS_TOKEN: ${{ secrets.DATA_REPO_TOKEN != '' }}
+        run: |
+          if [ -z "$DATA_REPO" ] || [ "$HAS_TOKEN" != "true" ]; then
+            echo "::warning::DATA_REPO / DATA_REPO_TOKEN が未設定のため、何もせず終了します。"
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "ok=true" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: actions/checkout@v4
+        if: steps.cfg.outputs.ok == 'true'
+      - name: データ用リポジトリ（非公開）を取得
+        if: steps.cfg.outputs.ok == 'true'
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ vars.DATA_REPO }}
+          token: ${{ secrets.DATA_REPO_TOKEN }}
+          path: _data_repo
+      - uses: actions/setup-python@v5
+        if: steps.cfg.outputs.ok == 'true'
+        with:
+          python-version: "3.12"
+      - name: 判定と集計（ログには件数だけ）
+        if: steps.cfg.outputs.ok == 'true'
+        run: |
+          pip install --quiet pandas numpy scipy
+          python analysis/snapshot_ledger.py --data _data_repo/data
+      - name: データ用リポジトリにコミット
+        if: steps.cfg.outputs.ok == 'true'
+        working-directory: _data_repo
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data/ledger
+          if git diff --cached --quiet; then echo "変更なし"; exit 0; fi
+          git commit -q -m "ledger: 事前登録した買い方の成績 $(date -u -d '+9 hours' +%Y-%m-%d)"
+          for i in 1 2 3 4; do git pull -q --rebase && git push -q && break; sleep $((i * 5)); done
