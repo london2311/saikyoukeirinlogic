@@ -196,7 +196,7 @@ def _fake_odds_api():
         f"nkrace_odds::{NK}": {
             "official_dt": "2099-01-01 21:36:00",
             "list_9": tri,
-            "list_7": [["0103", "1.4", "1.6", "1"], ["0203", "2.0", "2.5", "2"], ["0102", "0", "0", "0"]],
+            "list_7": [["0103", "1.4", "1.6", "1"], ["0203", "2.0", "2.5", "2"], ["0102", "0", "0", "0"], ["0101", "9999.9", "9999.9", "3"]],
             "list_5": [["0103", "3.5", "0", "1"]],
         },
         f"nkrace_odds::{NK}_last_dt": "2099-01-01 21:40:00"}}
@@ -212,6 +212,8 @@ def test_odds_json_and_save():
     check(t["odds"] == 12.3 and t["payoff"] == 1230 and t["popularity"] == 4, "的中組の払戻は payoff 列、odds は倍率")
     z = next(r for r in rows if r["bet_type"] == "ワイド" and r["combination"] == "1-2")
     check(z["odds"] == "" and z["absent"] == 1, "倍率0（欠車を含む組）は空欄・absent=1")
+    ph = next(r for r in rows if r["bet_type"] == "ワイド" and r["combination"] == "1-1")
+    check(ph["odds"] == "" and ph["odds_max"] == "" and ph["absent"] == 0, "9999.9倍（仮表示）は空欄・absent=0")
     n2 = next(r for r in rows if r["bet_type"] == "2車複")
     check(n2["odds_max"] == "" and n2["race_id"] == "079920990101" and n2["date"] == DATE, "ワイド以外は odds_max 空欄・ID")
     try:
