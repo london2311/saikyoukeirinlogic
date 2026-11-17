@@ -149,6 +149,8 @@ h2 { font-size: 15px; margin: 16px 0 6px; }
   const oddsCell = (od, of) => (of != null && Math.abs(of - od) >= 0.05) ? `<b>${x1(od)}</b><span class="muted">→${x1(of)}</span>倍` : `<b>${x1(od)}</b>倍`;
   const tier = (ev) => ev >= 1.3 ? 's' : ev >= 1.1 ? 'a' : ev >= 1.0 ? 'b' : 'c';
   const TIER_LABEL = { s: '◎強く推奨', a: '○推奨', b: '△注目', c: '' };
+  // 買い基準（今のオッズ）が今の1.5倍を超える時は、締切までにそこまで上がることはまず無いので数字を出さない
+  const reach = (line, od) => line != null && od > 0 && line <= od * 1.5;
   const evb = (ev) => { const t = tier(ev); return `<span class="evb ${t}">${TIER_LABEL[t] ? TIER_LABEL[t] + ' ' : ''}EV ${ev.toFixed(2)}</span>`; };
 
   async function deriveKey(pw, meta) {
@@ -654,7 +656,8 @@ h2 { font-size: 15px; margin: 16px 0 6px; }
       for (const bt of VALIDATED) (s.types[bt] || []).filter(([k, p, od]) => p >= 0.03 && od <= 300).slice(0, 2).forEach((x) => { const r = R(x); near.push([bt, r.k, r.p, r.od, r.ev, r.line]); });
       near.sort((a, b) => b[4] - a[4]);
       return `<div class="card skip"><div class="th2">⏸ 今は見送り <span class="muted" style="font-weight:normal">2車複・ワイドで期待値1.10以上の買い目がありません</span></div>
-        ${near.slice(0, 3).map(([bt, k, p, od, ev, line]) => `<div class="mini">${tbadge(bt)} ${combo(bt, k)} <span class="muted">今 ${x1(od)}倍 → <b>${x1(line)}倍以上</b>なら買い</span> ${evb(ev)}</div>`).join('')}</div>`;
+        ${near.slice(0, 3).map(([bt, k, p, od, ev, line]) => `<div class="mini">${tbadge(bt)} ${combo(bt, k)} <span class="muted">今 ${x1(od)}倍 → ${reach(line, od) ? `<b>${x1(line)}倍以上</b>なら買い` : 'この時点では買い基準に届かない'}</span> ${evb(ev)}</div>`).join('')}
+        ${['C-15', 'C-10'].includes(st.snap) ? '<div class="note">締切15・10分前のオッズは締切までに大きく動き、割安に見える組ほど下がるため、この時点ではほとんど届きません。締切5分前・2分前（最新）で判断してください。</div>' : ''}</div>`;
     }
     return `<div class="card hero"><h2>🔥 おすすめの買い目 <span class="muted" style="font-weight:normal">（${esc(SNAP_LABEL[st.snap] || '')}のオッズ）</span></h2>
       ${uniq.slice(0, 6).map((r) => { const t = tier(r.ev); return `<div class="rec ${t}">
@@ -713,7 +716,7 @@ h2 { font-size: 15px; margin: 16px 0 6px; }
       <div class="scroll"><table><tr><th>組</th><th>確率</th><th>${bt === 'ワイド' ? '最低〜最高' : '今→確定予想'}</th><th>買い基準</th><th>EV</th><th></th></tr>
       ${shown.length ? '' : `<tr><td colspan="5" class="muted">期待値${st.evMin}以上の組はありません</td></tr>`}
       ${shown.map(({ k, p, od, ev, line, of, omax, ofmax, evmax }) => `<tr class="${VALIDATED.has(bt) && ev >= 1.1 && p >= 0.005 && od <= 300 ? 'buy' + (ev >= 1.3 ? ' s' : '') : ''}">
-        <td>${combo(bt, k)}</td><td>${pct(p)}</td><td>${omax ? `<b>${x1(od)}〜${x1(omax)}</b>倍${Math.abs(of - od) >= 0.05 ? `<div class="muted">→${x1(of)}〜${x1(ofmax)}</div>` : ''}` : oddsCell(od, of)}</td><td>${x1(line)}倍</td>
+        <td>${combo(bt, k)}</td><td>${pct(p)}</td><td>${omax ? `<b>${x1(od)}〜${x1(omax)}</b>倍${Math.abs(of - od) >= 0.05 ? `<div class="muted">→${x1(of)}〜${x1(ofmax)}</div>` : ''}` : oddsCell(od, of)}</td><td>${reach(line, od) || ev >= 1.1 ? x1(line) + '倍' : '<span class="muted">届かない</span>'}</td>
         <td>${evRange(ev, evmax) || evb(ev).replace(/◎強く推奨 |○推奨 |△注目 /, '')}</td><td>${betCell(bt, k, { od, of, ev, p })}</td></tr>`).join('')}</table></div>
       <button class="more" data-t="${esc(bt)}">${all ? '上位だけ表示' : `全${rows.length}組を表示`}</button></div>`;
   }
