@@ -102,7 +102,7 @@ jobs:
           python netkeirin_snapshot.py --out-dir _data_repo/data --date "$DAY" --hours "$HOURS" --blocked-flag /tmp/blocked \
             --offsets 15,10,5,2 --alert --alert-snaps C-5,C-2 --site --drift _data_repo/data/ledger/drift.json \
             --report _data_repo/data/ledger/daily_report.json \
-            --flush-cmd "bash /tmp/flush.sh" --flush-min 60 \
+            --flush-cmd "bash /tmp/flush.sh" --flush-min 60 --settle-repo _data_repo \
             --on-day-done "gh workflow run netkeirin-collect.yml -R $REPO --ref $REF -f date={date} -f wait_min=45"
 
       - name: 次の実行を予約（リレー）

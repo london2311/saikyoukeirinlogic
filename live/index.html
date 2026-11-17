@@ -236,7 +236,8 @@ h2 { font-size: 15px; margin: 16px 0 6px; }
     const files = ls.ok ? (await ls.json()).map((f) => f.name).filter((n) => /^bets_\d{6}\.json$/.test(n)) : [];
     const bets = [];
     for (const f of files) { const { data } = await getJson('data/bets/' + f, []); bets.push(...data); }
-    const settled = (await getJson('data/bets/settled.json', {})).data;
+    // 正式な精算（毎朝・夜の台帳ジョブ）と、レースごとの即時精算（記録ジョブ）。正式な方を優先
+    const settled = { ...(await getJson('data/bets/settled_live.json', {})).data, ...(await getJson('data/bets/settled.json', {})).data };
     const set = (await getJson('data/bets/settings.json', DEF_SET)).data;
     st.bank = { bets, settled, set: { ...DEF_SET, ...set }, at: Date.now() };
   }
@@ -380,7 +381,7 @@ h2 { font-size: 15px; margin: 16px 0 6px; }
     const path = c.map((v, i) => `${i ? 'L' : 'M'}${sx(i).toFixed(1)},${sy(v).toFixed(1)}`).join('');
     const kpi = (lab, v, cls = '') => `<div class="card" style="margin:0;padding:10px"><div class="muted">${lab}</div><div style="font-size:20px;font-weight:800" class="${cls}">${v}</div></div>`;
     const rows = [...S.live].reverse().slice(0, 200).map((x) => { const r = b.settled[x.id];
-      const res = !r ? '<span class="pill">結果待ち</span>' : r.result === 'hit' ? `<span class="pill good">的中 +${yen(r.payout)}</span>` : r.result === 'void' ? '<span class="pill">返還</span>' : '<span class="pill off">外れ</span>';
+      const res = !r ? '<span class="pill">結果待ち</span>' : (r.result === 'hit' ? `<span class="pill good">的中 +${yen(r.payout)}</span>` : r.result === 'void' ? '<span class="pill">返還</span>' : '<span class="pill off">外れ</span>') + (r.live ? '<div class="muted" style="font-size:11px">速報</div>' : '');
       return `<tr><td>${esc(x.date.slice(4, 6))}/${esc(x.date.slice(6))} ${esc(x.venue)}${x.rn}R<div>${tbadge(x.bt)} ${combo(x.bt, x.key)}</div></td><td>${yen(x.stake)}</td><td>${r && r.odds_final ? `確定 <b>${x1(r.odds_final)}</b>倍` : (x.odds != null ? x1(x.odds) + '倍' : '-')}<div class="muted">${x.odds != null ? '記録時 ' + x1(x.odds) + '倍' : '手入力'}${x.ev != null ? '・EV ' + Number(x.ev).toFixed(2) : ''}</div></td><td>${res}${!r ? ` <button class="more" data-cancel="${esc(x.id)}">取消</button>` : ''}</td></tr>`; }).join('');
     const warn = S.tPL <= -set.dayLoss ? `<div class="card" style="border:2px solid var(--bad);color:var(--bad);font-weight:700">⚠ 今日の損失が上限（${yen(set.dayLoss)}）に達しました。今日はここまでにしましょう。</div>` : '';
     app.innerHTML = head + `<main>${warn}
@@ -509,7 +510,9 @@ h2 { font-size: 15px; margin: 16px 0 6px; }
     const tick = async () => {
       try {
         await load();
-        if (st.tok && (!st.bank || Date.now() - st.bank.at > 10 * 60 * 1000)) await loadBank();
+        // 資金管理: 結果待ちがある間は1分ごと、無ければ10分ごとに読み直す（レースごとに精算が反映される）
+        const waiting = st.bank && st.bank.bets.some((x) => !x.deleted && !st.bank.settled[x.id]);
+        if (st.tok && (!st.bank || Date.now() - st.bank.at > (waiting ? 60 : 600) * 1000)) await loadBank();
         if (!document.querySelector('input:focus')) render();  // 締切までの残り時間も更新
       } catch (e) { /* 次回再試行 */ }
       st.timer = setTimeout(tick, REFRESH_SEC() * 1000);
