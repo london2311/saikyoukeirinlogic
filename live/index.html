@@ -101,8 +101,8 @@ h2 { font-size: 15px; margin: 16px 0 6px; }
 .betbtn { border: none; border-radius: 10px; padding: 8px 16px; font-size: 15px; font-weight: 800; color: #fff; cursor: pointer;
   background: linear-gradient(120deg, #12a150, #0e8a4f); box-shadow: 0 2px 6px rgba(18,161,80,.35); }
 .betbtn:disabled { opacity: .6; }
-.ev2 { display: grid; gap: 3px; justify-items: end; margin-top: 4px; }
-.ev2row { display: flex; gap: 6px; align-items: center; font-size: 13px; white-space: nowrap; }
+.ev2 { display: grid; gap: 4px; justify-items: start; margin-top: 2px; }
+.ev2row { display: flex; flex-wrap: wrap; gap: 4px 8px; align-items: center; font-size: 14px; color: var(--ink); }
 .ev2lab { font-size: 11px; color: var(--sub); border: 1px solid var(--line); border-radius: 6px; padding: 0 5px; }
 .ev2lab.fin { color: var(--accent); border-color: var(--accent); font-weight: 700; }
 .ev2now { color: var(--sub); font-weight: 700; }
@@ -330,7 +330,8 @@ h2 { font-size: 15px; margin: 16px 0 6px; }
     const out = [];
     Object.entries(st.index.races || {}).forEach(([id, r]) => {
       const m = minutesTo(r.deadline || r.start);
-      if (!r.recs || m == null || m < 0) return;
+      // 締切15・10分前のオッズは締切までに大きく動く（下落の学習もまだ荒い）ので、推奨は締切5分前・2分前・最新のオッズだけ
+      if (!r.recs || m == null || m < 0 || !['C-5', 'C-2', 'LIVE'].includes(r.recs.snap)) return;
       r.recs.rows.forEach(([bt, k, p, od, of, ev, line, omax]) => {
         if (ev >= evRec) out.push({ race: id, venue: r.venue, rn: r.rn, deadline: r.deadline, start: r.start, m, bt, key: k, p, od, of, ev, line, omax, snap: r.recs.snap, at: r.recs.at });
       });
@@ -348,7 +349,8 @@ h2 { font-size: 15px; margin: 16px 0 6px; }
       return `<div class="rec ${tier(r.ev)}" style="margin:8px 0">
         <div><b>${esc(r.venue)} ${r.rn}R</b> <span class="${r.m <= 3 ? 'count soon' : 'count'}">${untilLabel(r.m)}（${esc(r.deadline || '')}）</span>
           <div style="margin-top:6px">${tbadge(r.bt)} ${combo(r.bt, r.key, true)}</div></div>
-        <div style="text-align:right">${tierPill(r.ev)}${evTwo(r.p, r.od, r.of, r.omax, null)}</div>
+        <div style="text-align:right">${tierPill(r.ev)}</div>
+        <div class="line2">${evTwo(r.p, r.od, r.of, r.omax, null)}</div>
         <div class="line2">当たる確率 ${pct(r.p)}・今のオッズが<b>${x1(r.line)}倍以上なら買い</b>・${esc(SNAP_LABEL[r.snap] || '')}（${esc(r.at || '')}）のオッズ</div>
         <div class="line2">${done ? `✅ <b>賭けた ${yen(done.stake)}</b> <button class="more" data-cancel="${esc(done.id)}">取消</button>` :
           `<input type="number" min="100" step="100" value="${stakeOf()}" data-stake="${esc(r.race + r.bt + r.key)}" style="width:80px;padding:6px;border:1px solid var(--line);border-radius:8px;background:var(--card);color:var(--ink)"> 円
@@ -357,7 +359,7 @@ h2 { font-size: 15px; margin: 16px 0 6px; }
     const R0 = st.index.report;
     const repLine = R0 && R0.last ? `<div class="mini toreport" style="cursor:pointer">📊 ${esc(String(R0.last).slice(4, 6))}/${esc(String(R0.last).slice(6))} の推奨 ${R0.n}点・的中 ${R0.hits}・回収率 ${R0.roi == null ? '-' : (R0.roi * 100).toFixed(0) + '%'}${R0.alerts ? ` <span class="pill warn">⚠ ${R0.alerts}件</span>` : ' <span class="pill good">異常なし</span>'}</div>` : '';
     return `<div class="card hero" style="border:2px solid #2f5bea">${repLine}<h2>🎯 今の推奨（1点・${yen(stakeOf())}）<span class="muted" style="font-weight:normal">全場・締切の早い順・確定予想の期待値 ${(st.bank ? st.bank.set.evRec : DEF_SET.evRec).toFixed(2)} 以上</span></h2>
-      ${bankLine}${cards || '<div class="skip" style="margin-top:8px">⏸ 今は推奨がありません（見送り）。締切15分前から順に更新されます。</div>'}</div>`;
+      ${bankLine}${cards || '<div class="skip" style="margin-top:8px">⏸ 今は推奨がありません（見送り）。各レースの締切5分前から判定します（締切6分前からは30秒ごとに最新）。</div>'}</div>`;
   }
   function bindBoard() {
     app.querySelectorAll('.betbtn').forEach((b) => b.onclick = async (e) => {
@@ -674,14 +676,17 @@ h2 { font-size: 15px; margin: 16px 0 6px; }
       return `<div class="card skip"><div class="th2">⏸ 今は見送り <span class="muted" style="font-weight:normal">2車複・ワイドで期待値1.10以上の買い目がありません</span></div>
         ${near.slice(0, 3).map(([bt, k, p, od, ev, line, of]) => `<div class="rec c" style="margin:6px 0"><div>${tbadge(bt)} ${combo(bt, k)}
           <div class="muted" style="margin-top:4px">${reach(line, od) ? `今のオッズが <b>${x1(line)}倍以上</b>なら買い` : 'この時点では買い基準に届かない'}</div></div>
-          <div>${evTwo(p, od, of, null, null)}</div></div>`).join('')}
+          <div></div><div class="line2">${evTwo(p, od, of, null, null)}</div></div>`).join('')}
         ${['C-15', 'C-10'].includes(st.snap) ? '<div class="note">締切15・10分前のオッズは締切までに大きく動き、割安に見える組ほど下がるため、この時点ではほとんど届きません。締切5分前・2分前（最新）で判断してください。</div>' : ''}</div>`;
     }
-    return `<div class="card hero"><h2>🔥 おすすめの買い目 <span class="muted" style="font-weight:normal">（${esc(SNAP_LABEL[st.snap] || '')}のオッズ）</span></h2>
+    const early = ['C-15', 'C-10'].includes(st.snap);
+    return `<div class="card hero"><h2>🔥 おすすめの買い目 <span class="muted" style="font-weight:normal">（${esc(SNAP_LABEL[st.snap] || '')}のオッズ${early ? '・参考' : ''}）</span></h2>
+      ${early ? '<div class="note" style="margin-top:0">締切15・10分前のオッズは締切までに大きく動くため参考です。判定は締切5分前・2分前（最新）で。</div>' : ''}
       ${uniq.slice(0, 6).map((r) => { const t = tier(r.ev); return `<div class="rec ${t}">
         <div>${tbadge(r.bt)} <span class="pill ${r.kind.startsWith('★') ? 'good' : ''}">${esc(r.kind)}</span>
           <div style="margin-top:6px" class="combos">${r.group ? r.keys.slice(0, 8).map((k) => combo(r.bt, k)).join('') + (r.keys.length > 8 ? ` <span class="muted">ほか${r.keys.length - 8}点</span>` : '') : combo(r.bt, r.keys[0], true)}</div></div>
-        <div style="text-align:right">${r.group ? `${evb(r.ev)}<div class="buy">合成 ${x1(r.od)}倍</div><div class="muted" style="font-size:11px">確定予想での期待値</div>` : `${tierPill(r.ev)}${evTwo(r.P, r.od, r.of, r.omax, r.ofmax)}`}</div>
+        <div style="text-align:right">${r.group ? `${evb(r.ev)}<div class="buy">合成 ${x1(r.od)}倍</div><div class="muted" style="font-size:11px">確定予想での期待値</div>` : tierPill(r.ev)}</div>
+        ${r.group ? '' : `<div class="line2">${evTwo(r.P, r.od, r.of, r.omax, r.ofmax)}</div>`}
         <div class="line2">${r.group ? `${r.keys.length}点・的中 ${pct(r.P)}・${esc(r.lab)}` : `当たる確率 ${r.P != null ? pct(r.P) : '-'}・今のオッズが<b>${x1(r.line)}倍以上なら買い</b>${r.lab ? '・' + esc(r.lab) : ''}`}</div>
         ${whyHtml(s, r)}
       </div>`; }).join('')}
