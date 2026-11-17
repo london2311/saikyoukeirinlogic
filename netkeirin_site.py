@@ -27,6 +27,13 @@ import keirin_collector as KC
 
 ITER = 200_000
 SITE_SNAPS = ('C-15', 'C-10', 'C-5', 'C-2')  # 締切の15・10・5・2分前
+LIVE = 'LIVE'  # 締切直前の数分は30秒ごとに更新（記録・台帳には使わず、期待値ボードの表示だけ）
+
+
+def drift_snap_for(deadline, now):
+    """LIVE の下落の学習は、締切までの残りに近い時点のものを使う"""
+    m = (deadline - now).total_seconds() / 60
+    return 'C-2' if m < 3.5 else 'C-5' if m < 7.5 else 'C-10' if m < 12.5 else 'C-15'
 TYPES = ['2車複', 'ワイド', '3連複', '2車単', '3連単']
 VALIDATED = {'2車複', 'ワイド'}  # 過去の検証で EV 買いがプラスだった券種（他は参考）
 
@@ -138,8 +145,9 @@ class SiteBuilder:
         import keirin_engine as E
         from datetime import timedelta
         deadline = deadline or (start - timedelta(minutes=5))
-        if snap not in SITE_SNAPS:
+        if snap not in SITE_SNAPS and snap != LIVE:
             return None
+        dsnap = drift_snap_for(deadline, now) if snap == LIVE else snap
         cards = self._cards(nk)
         if not cards:
             return None
@@ -161,11 +169,11 @@ class SiteBuilder:
                     wmax['-'.join(sorted(str(o['combination']).split('-'), key=int))] = hi
         for t in res.get('tickets', []):
             # 締切後の下落を見込んだ「確定時の予想オッズ」と、それで計算した期待値（下落の学習データが無ければ今のオッズと同じ）
-            of = round(t['odds'] * drift_ratio(self.drift, t['type'], snap, t['odds'], t['ev']), 1)
+            of = round(t['odds'] * drift_ratio(self.drift, t['type'], dsnap, t['odds'], t['ev']), 1)
             row = [t['key'], round(t['prob'], 5), t['odds'], round(t['ev'], 3), buy_line(t['prob']), of, round(t['prob'] * of, 3)]
             if t['type'] == 'ワイド' and wmax.get(t['key'], 0) > t['odds']:
                 hi = wmax[t['key']]
-                hf = round(hi * drift_ratio(self.drift, t['type'], snap, hi, t['prob'] * hi), 1)
+                hf = round(hi * drift_ratio(self.drift, t['type'], dsnap, hi, t['prob'] * hi), 1)
                 row += [hi, hf, round(t['prob'] * hf, 3)]  # 最高倍率・その確定予想・その期待値（期待値は「最低〜最高」の幅）
             types.setdefault(t['type'], []).append(row)
         for bt in types:
@@ -179,7 +187,7 @@ class SiteBuilder:
             for s in self.strategies:
                 for t in L.select(s, res['tickets'], res):
                     strat.append([s['id'], s['label'], t['type'], t['key'], t['odds'], round(t['ev'], 3), buy_line(t['prob'], s.get('min', 1.10))])
-        groups = self._groups(res, cards, snap) if res.get('market_ok') else {}
+        groups = self._groups(res, cards, dsnap) if res.get('market_ok') else {}
         riders = []
         for r in sorted(cards, key=lambda x: int(x['car_number'])):
             if str(r.get('absent', 0)) in ('1', 'True', 'true'):

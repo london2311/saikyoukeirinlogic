@@ -113,9 +113,10 @@ h2 { font-size: 15px; margin: 16px 0 6px; }
   const OWNER = location.hostname.split('.')[0] || 'london2311';
   const REPO = location.pathname.split('/').filter(Boolean)[0] || 'saikyoukeirinlogic';
   const BRANCH = 'site-data';
-  const REFRESH_SEC = 90;
-  const SNAPS = ['C-15', 'C-10', 'C-5', 'C-2'];  // 締切の15・10・5・2分前
-  const SNAP_LABEL = { 'C-15': '締切15分前', 'C-10': '締切10分前', 'C-5': '締切5分前', 'C-2': '締切2分前' };
+  // 更新の確認間隔: GitHub の API は、トークン無しだと1時間60回までなので60秒。資金管理のトークンがあれば15秒
+  const REFRESH_SEC = () => (st.tok ? 15 : 60);
+  const SNAPS = ['C-15', 'C-10', 'C-5', 'C-2', 'LIVE'];  // 締切の15・10・5・2分前 と、締切6分前からの30秒ごとの最新
+  const SNAP_LABEL = { 'C-15': '締切15分前', 'C-10': '締切10分前', 'C-5': '締切5分前', 'C-2': '締切2分前', LIVE: '最新' };
   const TYPES = ['2車複', 'ワイド', '3連複', '2車単', '3連単'];
   const VALIDATED = new Set(['2車複', 'ワイド']);
   const app = document.getElementById('app');
@@ -161,7 +162,9 @@ h2 { font-size: 15px; margin: 16px 0 6px; }
     return JSON.parse(await new Response(ds).text());
   }
   async function latestSha() {
-    const r = await fetch(`https://api.github.com/repos/${OWNER}/${REPO}/branches/${BRANCH}`, { cache: 'no-store' });
+    const url = `https://api.github.com/repos/${OWNER}/${REPO}/branches/${BRANCH}`;
+    let r = await fetch(url, { cache: 'no-store', headers: st.tok ? { Authorization: `Bearer ${st.tok}` } : {} });
+    if (st.tok && (r.status === 401 || r.status === 403)) r = await fetch(url, { cache: 'no-store' });  // トークンが切れていても読めるように
     if (!r.ok) throw new Error('データがまだありません（' + r.status + '）');
     return (await r.json()).commit.sha;
   }
@@ -169,7 +172,9 @@ h2 { font-size: 15px; margin: 16px 0 6px; }
   async function getEnc(name) { const r = await raw(name); if (!r.ok) throw new Error(name + ' ' + r.status); return decrypt(await r.arrayBuffer()); }
 
   async function load(pw) {
-    st.sha = await latestSha();
+    const sha = await latestSha();
+    if (!pw && st.index && sha === st.sha) return false;  // 変わっていなければ取り直さない
+    st.sha = sha;
     const meta = await (await raw('meta.json')).json();
     if (!st.key || !st.meta || st.meta.salt !== meta.salt) { st.key = await deriveKey(pw || st.pw, meta); st.meta = meta; }
     st.index = await getEnc('index.enc');
@@ -468,10 +473,16 @@ h2 { font-size: 15px; margin: 16px 0 6px; }
     if (await loadTok()) { try { await loadBank(); render(); } catch (e) { /* 次回 */ } }
   }
   function startRefresh() {
-    clearInterval(st.timer);
-    st.timer = setInterval(async () => {
-      try { await load(); if (st.tok && (!st.bank || Date.now() - st.bank.at > 10 * 60 * 1000)) await loadBank(); if (!document.querySelector('input:focus')) render(); } catch (e) { /* 次回再試行 */ }
-    }, REFRESH_SEC * 1000);
+    clearTimeout(st.timer);
+    const tick = async () => {
+      try {
+        await load();
+        if (st.tok && (!st.bank || Date.now() - st.bank.at > 10 * 60 * 1000)) await loadBank();
+        if (!document.querySelector('input:focus')) render();  // 締切までの残り時間も更新
+      } catch (e) { /* 次回再試行 */ }
+      st.timer = setTimeout(tick, REFRESH_SEC() * 1000);
+    };
+    st.timer = setTimeout(tick, REFRESH_SEC() * 1000);
   }
 
   // ---- 一覧
@@ -504,7 +515,7 @@ h2 { font-size: 15px; margin: 16px 0 6px; }
       st.venue = next ? next.venue : venues[0];
     }
     const list = races.filter((r) => r.venue === st.venue).sort((a, b) => a.rn - b.rn);
-    app.innerHTML = `<header><h1>期待値ボード <span class="upd">${esc(st.index.date)} 更新 ${esc((st.index.updated || '').slice(11, 16))} <button class="back" id="toreport" style="margin-left:8px">📊検証${st.index.report && st.index.report.alerts ? ' ⚠' : ''}</button><button class="back" id="tobank" style="margin-left:6px">💰資金管理</button></span></h1>
+    app.innerHTML = `<header><h1>期待値ボード <span class="upd">${esc(st.index.date)} 更新 ${esc((st.index.updated || '').slice(11, 19))} <button class="back" id="toreport" style="margin-left:8px">📊検証${st.index.report && st.index.report.alerts ? ' ⚠' : ''}</button><button class="back" id="tobank" style="margin-left:6px">💰資金管理</button></span></h1>
       <div class="tabs">${venues.map((v) => `<button class="tab ${v === st.venue ? 'on' : ''}" data-v="${esc(v)}">${esc(v)}${races.some((r) => r.venue === v && recCount(r) && (minutesTo(r.deadline || r.start) ?? -1) > 0) ? '<span class="dot"></span>' : ''}</button>`).join('')}</div></header>
       <main>${dayBanner()}${boardHtml()}<h2 style="margin-top:18px">🏟 ${esc(st.venue || '')} のレース</h2>${evControl()}${list.map(raceCard).join('') || '<p class="muted">この場のレースはまだありません。</p>'}
       <div class="card legend">${evb(1.35)}${evb(1.15)}${evb(1.03)}<span>EV＝当たる確率×今のオッズ。1.10以上が買いの目安</span></div>
@@ -541,7 +552,7 @@ h2 { font-size: 15px; margin: 16px 0 6px; }
 
   // ---- レース詳細
   async function openRace(id) {
-    st.race = id; st.raceData = null; st.snap = null; st.showAll = {};
+    st.race = id; st.raceData = null; st.snap = null; st.snapPicked = false; st.showAll = {};
     try { st.raceData = await getEnc(id + '.enc'); } catch (e) { /* noop */ }
     render(); window.scrollTo(0, 0);
   }
@@ -550,7 +561,7 @@ h2 { font-size: 15px; margin: 16px 0 6px; }
     const head = `<header><h1><button class="back" id="back">← 一覧</button><span class="upd">${esc(st.index.date)}</span></h1></header>`;
     if (!d) { app.innerHTML = head + '<main><p class="muted">まだ記録がありません。</p></main>'; return bindBack(); }
     const have = SNAPS.filter((s) => d.snaps[s]);
-    if (!st.snap || !d.snaps[st.snap]) st.snap = have[have.length - 1];
+    if (!st.snap || !d.snaps[st.snap] || !st.snapPicked) st.snap = have[have.length - 1];  // 自分で選んでいなければ常に一番新しい時点
     const s = d.snaps[st.snap];
     const riders = (d.riders || []).map(([c, n, p, pt, sty]) => `<span>${car(c)} ${esc(n)} <span style="opacity:.8">${esc(p)}・${esc(pt)}・${esc(sty)}</span></span>`).join('');
     const wins = Object.entries(s.win || {}).sort((a, b) => b[1] - a[1]);
@@ -568,7 +579,7 @@ h2 { font-size: 15px; margin: 16px 0 6px; }
       <button data-v="group" class="${view === 'group' ? 'on' : ''}">買い目群（合成オッズ）</button></div>${evControl()}</div>${strat}${tables}
       <p class="note">EV＝当たる確率×確定予想オッズ（締切後の下落を過去の記録から見込んだ倍率。「今→確定予想」で表示。学習前は今のオッズ）。ワイドは最低倍率。「買い基準」＝EVが1.10になる倍率。表示は「表示する期待値」以上・確率0.5%以上・300倍以下（「全○組を表示」で全部）。</p></main>`;
     bindBack();
-    app.querySelectorAll('.seg button[data-s]').forEach((b) => b.onclick = () => { st.snap = b.dataset.s; render(); });
+    app.querySelectorAll('.seg button[data-s]').forEach((b) => b.onclick = () => { st.snap = b.dataset.s; st.snapPicked = b.dataset.s !== 'LIVE'; render(); });
     bindEv();
     app.querySelectorAll('#view button').forEach((b) => b.onclick = () => { st.view = b.dataset.v; store.set('kb_view', st.view); render(); });
     app.querySelectorAll('.more').forEach((b) => b.onclick = () => { st.showAll[b.dataset.t] = !st.showAll[b.dataset.t]; render(); });
