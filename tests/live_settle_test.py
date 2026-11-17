@@ -57,10 +57,10 @@ def main():
     races2 = [(nk2, '08:30')]
     t2 = N.start_dt(D2, '08:30')
     check(not s.tick(races2, D2, t2 + timedelta(minutes=7)) and fetched == [nk2], '払戻がまだ無ければ精算しない')
-    check(not s.tick(races2, D2, t2 + timedelta(minutes=8)) and fetched == [nk2], '2分たつまでは取り直さない')
+    check(not s.tick(races2, D2, t2 + timedelta(minutes=7, seconds=30)) and fetched == [nk2], '1分たつまでは取り直さない')
     res[nk2] = dict(orders=[dict(car_number=1, accident='')], payoffs=[dict(bet_type='2車単', combination='2-1', payoff=990)])
     s.read_at = None
-    check(s.tick(races2, D2, t2 + timedelta(minutes=10)) and fetched == [nk2, nk2], '2分後に取り直して精算')
+    check(s.tick(races2, D2, t2 + timedelta(minutes=10)) and fetched == [nk2, nk2], '1分以上たったら取り直して精算')
     live = json.loads((repo / 'data' / 'bets' / 'settled_live.json').read_text(encoding='utf-8'))
     check(live['d']['result'] == 'miss' and live['d']['odds_final'] is None, f'外れ {live["d"]}')
     check(set(s.known) == {D1, D2}, '前日のレース一覧も覚えている（最終レースの精算用）')
@@ -68,6 +68,13 @@ def main():
     s2 = LS.LiveSettler(Path(tempfile.mkdtemp()), fetch_result=fetch_result, read_remote=read_remote)
     fetched.clear()
     check(s2.tick(races1, D1, t + timedelta(hours=5)) and fetched == [nk1], '発走から5時間たったレースも精算する')
+    # 今日の推奨（REC2）を記録して、結果が出たら「100円ずつ買った」として精算する
+    s3 = LS.LiveSettler(Path(tempfile.mkdtemp()), fetch_result=fetch_result, read_remote=lambda paths: {p: None for p in paths})
+    check(s3.add_recs(D1, wt1, [('2車複', '1-2', 0.2, 6.0, 5.1, 1.02), ('ワイド', '1-3', 0.1, 9.0, 8.0, 0.8)], t) and
+          not s3.add_recs(D1, wt1, [('2車複', '1-2', 0.2, 6.0, 5.1, 1.02)], t), '推奨した組を記録（同じ組は1回だけ）')
+    check(s3.tick(races1, D1, t + timedelta(minutes=7)), '記録の無いレースでも、推奨があれば結果を見て精算')
+    sm = s3.today_summary(D1)
+    check(sm['n'] == 2 and sm['settled'] == 2 and sm['hits'] == 1 and sm['stake'] == 200 and sm['ret'] == 480, f'今日の推奨の成績 {sm}')
     print('\n全テスト成功')
 
 

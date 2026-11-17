@@ -106,6 +106,23 @@ class SiteBuilder:
         self.dirty = False
         self.set_report(report)
 
+    def rec_picks(self, wt, ev_min=1.10, odds_max=100.0, ev_max=2.0, fav_min=0.45):
+        """そのレースの今の推奨（REC2 と同じ条件）: [(券種, 組, 確率, 今のオッズ, 確定予想オッズ, 確定予想の期待値)]"""
+        ent = self.index['races'].get(wt) or {}
+        fav = str(ent['fav'][0]) if ent.get('fav') and ent['fav'][1] >= fav_min else None
+        out = []
+        for row in (ent.get('recs') or {}).get('rows', []):
+            bt, k, p, od, of, ev = row[:6]
+            if ev >= ev_min and od <= odds_max and ev <= ev_max and (not fav or fav in k.split('-')):
+                out.append((bt, k, p, od, of, ev))
+        return out
+
+    def set_today(self, summary):
+        """今日の推奨の成績（締切2分前に推奨した組を、結果が出しだい精算）"""
+        if summary and self.index.get('today_recs') != summary:
+            self.index['today_recs'] = summary
+            self.dirty = True
+
     def set_report(self, report):
         """毎朝の検証レポート（analysis/daily_report.py）。一覧には要約だけ、全体は report.enc"""
         if report:

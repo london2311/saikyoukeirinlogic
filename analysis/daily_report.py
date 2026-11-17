@@ -84,6 +84,61 @@ def ll_check(calib, dates):
     return dict(n=len(d), diff=round(m, 4), z=round(m / (sd / math.sqrt(len(d))), 2) if sd > 0 else 0.0)
 
 
+# 提案のあり方の比較（探索）: 候補（cands.csv）から、いろいろな選び方を同じ日々で比べる。
+# 実際の回収率は運の影響が大きいので、「確定オッズでの期待値」（確率 × 実際の確定オッズ）と、的中の予想と実際も並べる
+VARIANTS = [
+    ('REC', '推奨（確定予想EV1.10以上・300倍以下）', dict(ev_d=1.1, omax=300)),
+    ('REC2', '推奨v2（＋100倍以下・EV2.0以下・強い1番人気は軸）', dict(ev_d=1.1, omax=100, ev_d_max=2.0, fav=True)),
+    ('D100', '確定予想EV1.0以上・100倍以下', dict(ev_d=1.0, omax=100)),
+    ('D105', '確定予想EV1.05以上・100倍以下', dict(ev_d=1.05, omax=100)),
+    ('D120', '確定予想EV1.2以上・100倍以下', dict(ev_d=1.2, omax=100)),
+    ('D110_30', '確定予想EV1.10以上・30倍以下', dict(ev_d=1.1, omax=30)),
+    ('D110_Q', '2車複だけ・確定予想EV1.10以上・100倍以下', dict(ev_d=1.1, omax=100, bt='2車複')),
+    ('D110_W', 'ワイドだけ・確定予想EV1.10以上・100倍以下', dict(ev_d=1.1, omax=100, bt='ワイド')),
+    ('TOP1', '各レース1点（確定予想EVが最も高い組・1.10以上・100倍以下）', dict(ev_d=1.1, omax=100, top1=True)),
+    ('N110', '今のオッズでEV1.10以上・300倍以下（下落を見込まない）', dict(ev_now=1.1, omax=300)),
+    ('ALL', '全部（比較の基準）', dict(omax=300)),
+]
+
+
+def variants(data: Path, dates, snap='C-2'):
+    import csv as _csv
+    p = data / 'ledger' / 'cands.csv'
+    try:
+        rows = [r for r in _csv.DictReader(open(p, encoding='utf-8')) if r['snap'] == snap and r['date'] in set(dates)]
+    except OSError:
+        return []
+    for r in rows:
+        for k in ('prob', 'odds', 'ev_now', 'ev_d', 'fav_win', 'payoff'):
+            r[k] = float(r[k] or 0)
+        r['odds_final'] = float(r['odds_final']) if r['odds_final'] not in ('', None) else None
+        r['has_fav'] = r['has_fav'] in ('1', 1, True)
+    out = []
+    for vid, label, c in VARIANTS:
+        sel = [r for r in rows if r['ev_d'] >= c.get('ev_d', -1) and r['ev_now'] >= c.get('ev_now', -1) and r['odds'] <= c.get('omax', 1e9)
+               and r['ev_d'] <= c.get('ev_d_max', 1e9) and (not c.get('bt') or r['bet_type'] == c['bt'])
+               and (not c.get('fav') or r['fav_win'] < 0.45 or r['has_fav'])]
+        if c.get('top1'):
+            best = {}
+            for r in sel:
+                if r['race_id'] not in best or r['ev_d'] > best[r['race_id']]['ev_d']:
+                    best[r['race_id']] = r
+            sel = list(best.values())
+        n = len(sel)
+        if not n:
+            out.append(dict(id=vid, label=label, n=0))
+            continue
+        ret = sum(r['payoff'] for r in sel) / 100.0
+        hits = sum(1 for r in sel if r['payoff'] > 0)
+        exp_hits = sum(r['prob'] for r in sel)
+        fin = [r['prob'] * r['odds_final'] for r in sel if r['odds_final']]
+        lo, hi = SL.roi_ci([1.0] * n, [r['payoff'] / 100.0 for r in sel], [r['race_id'] for r in sel])
+        out.append(dict(id=vid, label=label, n=n, hits=hits, exp_hits=round(exp_hits, 2), roi=round(ret / n, 4), lo=lo, hi=hi,
+                        ev_final=round(sum(fin) / len(fin), 4) if fin else None, avg_odds=round(sum(r['odds'] for r in sel) / n, 1),
+                        days=len({r['date'] for r in sel})))
+    return out
+
+
 def race_counts(data: Path):
     n = defaultdict(int)
     for p in glob.glob(str(data / '20??' / 'races.csv')):
@@ -165,7 +220,8 @@ def build(data: Path, strategies, now=None):
         if rc.get(d) and days.get(d, 0) < 0.7 * rc[d]:
             alerts.append(f'{d}: 判定できたレースが {days.get(d, 0)} / {rc[d]}（記録漏れ）')
 
-    return dict(generated=now.strftime('%Y-%m-%d %H:%M'), days=len(dates), first=dates[0] if dates else None, last=last,
+    var = dict(last=variants(data, [last]) if last else [], week=variants(data, recent), all=variants(data, dates))
+    return dict(generated=now.strftime('%Y-%m-%d %H:%M'), days=len(dates), first=dates[0] if dates else None, last=last, variants=var,
                 yesterday=yesterday, strategies=strat, mine=mine, calib=dict(all=cal_all, week=cal_week), ll=ll,
                 alerts=alerts, notes=notes,
                 rule='1日の結果ではロジックを直さない（運の影響が大きい）。⚠ が出た時だけ原因を調べて直す。月1回、十分な点数で学習し直す')
