@@ -166,6 +166,10 @@ h2 { font-size: 15px; margin: 16px 0 6px; }
   }
   const tierPill = (ev) => { const t = tier(ev); return TIER_LABEL[t] ? `<span class="evb ${t}">${TIER_LABEL[t]}</span>` : ''; };
   // 買い基準（今のオッズ）が今の1.5倍を超える時は、締切までにそこまで上がることはまず無いので数字を出さない
+  // 推奨の条件（REC2）: 100倍以下・確定予想の期待値2.0以下・強い1番人気（1着45%以上）のレースは1番人気を含む組だけ
+  const REC_ODDS_MAX = 100, REC_EV_MAX = 2.0, FAV_MIN = 0.45;
+  const favOf = (win) => { const e = Object.entries(win || {}).sort((a, b) => b[1] - a[1])[0]; return e && e[1] >= FAV_MIN ? String(e[0]) : null; };
+  const recOk = (k, od, ev, fav) => od <= REC_ODDS_MAX && ev <= REC_EV_MAX && (!fav || String(k).split('-').includes(fav));
   const reach = (line, od) => line != null && od > 0 && line <= od * 1.5;
   const evb = (ev) => { const t = tier(ev); return `<span class="evb ${t}">${TIER_LABEL[t] ? TIER_LABEL[t] + ' ' : ''}EV ${ev.toFixed(2)}</span>`; };
 
@@ -366,8 +370,9 @@ h2 { font-size: 15px; margin: 16px 0 6px; }
       const m = minutesTo(r.deadline || r.start);
       // 締切15・10分前のオッズは締切までに大きく動く（下落の学習もまだ荒い）ので、推奨は締切5分前・2分前・最新のオッズだけ
       if (!r.recs || m == null || m < 0 || !['C-5', 'C-2', 'LIVE'].includes(r.recs.snap)) return;
+      const fav = r.fav && r.fav[1] >= FAV_MIN ? String(r.fav[0]) : null;
       r.recs.rows.forEach(([bt, k, p, od, of, ev, line, omax]) => {
-        if (ev >= evRec) out.push({ race: id, venue: r.venue, rn: r.rn, deadline: r.deadline, start: r.start, m, bt, key: k, p, od, of, ev, line, omax, snap: r.recs.snap, at: r.recs.at });
+        if (ev >= evRec && recOk(k, od, ev, fav)) out.push({ race: id, venue: r.venue, rn: r.rn, deadline: r.deadline, start: r.start, m, bt, key: k, p, od, of, ev, line, omax, snap: r.recs.snap, at: r.recs.at });
       });
     });
     return out.sort((a, b) => a.m - b.m || b.ev - a.ev);
@@ -392,7 +397,7 @@ h2 { font-size: 15px; margin: 16px 0 6px; }
     }).join('');
     const R0 = st.index.report;
     const repLine = R0 && R0.last ? `<div class="mini toreport" style="cursor:pointer">📊 ${esc(String(R0.last).slice(4, 6))}/${esc(String(R0.last).slice(6))} の推奨 ${R0.n}点・的中 ${R0.hits}・回収率 ${R0.roi == null ? '-' : (R0.roi * 100).toFixed(0) + '%'}${R0.alerts ? ` <span class="pill warn">⚠ ${R0.alerts}件</span>` : ' <span class="pill good">異常なし</span>'}</div>` : '';
-    return `<div class="card hero" style="border:2px solid #2f5bea">${repLine}<h2>🎯 今の推奨（1点・${yen(stakeOf())}）<span class="muted" style="font-weight:normal">全場・締切の早い順・確定予想の期待値 ${(st.bank ? st.bank.set.evRec : DEF_SET.evRec).toFixed(2)} 以上</span></h2>
+    return `<div class="card hero" style="border:2px solid #2f5bea">${repLine}<h2>🎯 今の推奨（1点・${yen(stakeOf())}）<span class="muted" style="font-weight:normal">全場・締切の早い順・確定予想の期待値 ${(st.bank ? st.bank.set.evRec : DEF_SET.evRec).toFixed(2)} 以上・100倍以下・強い1番人気は含む組だけ</span></h2>
       ${bankLine}${cards || '<div class="skip" style="margin-top:8px">⏸ 今は推奨がありません（見送り）。各レースの締切5分前から判定します（締切6分前からは30秒ごとに最新）。</div>'}</div>`;
   }
   function bindBoard() {
@@ -460,7 +465,7 @@ h2 { font-size: 15px; margin: 16px 0 6px; }
           <label>場<select id="m_venue" style="${INP}">${Object.entries(VENUES).map(([c, n]) => `<option value="${c}" ${String(MF.venue) === c ? 'selected' : ''}>${esc(n)}</option>`).join('')}</select></label>
           <label>レース<select id="m_rn" style="${INP}">${Array.from({ length: 12 }, (_, i) => `<option value="${i + 1}" ${+MF.rn === i + 1 ? 'selected' : ''}>${i + 1}R</option>`).join('')}</select></label>
           <label>券種<select id="m_bt" style="${INP}">${['2車複', '2車単', 'ワイド', '3連複', '3連単'].map((t) => `<option ${MF.bt === t ? 'selected' : ''}>${t}</option>`).join('')}</select></label>
-          <label>組（例 2-134 / 3-1-456）<input id="m_key" inputmode="numeric" placeholder="2-134" value="${esc(MF.key)}" style="${INP}"></label>
+          <label>組（例 2-134 / 3-1-456）<span style="display:flex;gap:6px;margin-top:4px"><input id="m_key" inputmode="decimal" autocomplete="off" placeholder="2-134 または 2.134" value="${esc(MF.key)}" style="${INP};margin-top:0;flex:1"><button type="button" id="m_dash" class="more" style="padding:0 12px;font-size:20px;border:1px solid var(--line);border-radius:8px">－</button></span></label>
           <label>1点の金額（円）<input id="m_stake" type="number" min="100" step="100" value="${esc(MF.stake)}" style="${INP}"></label>
         </div>
         <div id="m_prev" class="muted" style="margin-top:6px"></div>
@@ -482,6 +487,8 @@ h2 { font-size: 15px; margin: 16px 0 6px; }
         ? `→ <b>${keys.length}点</b>（合計 ${yen(stake * keys.length)}）: ${keys.slice(0, 30).map((k) => esc(k)).join('・')}${keys.length > 30 ? ' ほか' : ''}` : '';
     };
     ['m_date', 'm_venue', 'm_rn', 'm_bt', 'm_key', 'm_stake'].forEach((id) => { const el = document.getElementById(id); el.oninput = preview; el.onchange = preview; });
+    // スマホの数字キーボードには「-」が無いので、「－」ボタンで入れる（「.」でも区切れる）
+    document.getElementById('m_dash').onclick = (e) => { e.preventDefault(); const k = document.getElementById('m_key'); k.value += '-'; k.focus(); preview(); };
     preview();
     document.getElementById('m_add').onclick = async () => {
       readMF();
@@ -698,23 +705,28 @@ h2 { font-size: 15px; margin: 16px 0 6px; }
   function hero(s) {
     const recs = [];
     const seen = new Set();
+    const fav = favOf(s.win);
+    let dropped = 0;
     const rowOf = (bt, k) => { const x = (s.types[bt] || []).find((r) => r[0] === k); return x ? R(x) : null; };
     (s.strat || []).forEach(([id, lab, bt, k, od, ev, line]) => {
       // 事前登録の買い方は「今のオッズでの期待値」で該当を判定している（検証の条件は変えない）。
       // おすすめに出すのは、確定予想（締切後の下落を見込む）でも期待値1.10以上のものだけ
       const r = rowOf(bt, k);
       if (!r || r.ev < 1.1) return;
+      if (!recOk(k, r.od, r.ev, fav)) { dropped++; return; }
       seen.add(bt + k);
       recs.push({ kind: '★ 事前登録', bt, keys: [k], od, of: r.of, ev: r.ev, line: r.line, P: r.p, lab, omax: r.omax, ofmax: r.ofmax, evmax: r.evmax });
     });
     for (const bt of VALIDATED) {
-      (s.types[bt] || []).map(R).filter(({ k, p, od, ev }) => ev >= 1.1 && p >= 0.005 && od <= 300 && !seen.has(bt + k)).slice(0, 3)
+      (s.types[bt] || []).map(R).filter(({ k, p, od, ev }) => ev >= 1.1 && p >= 0.005 && od <= 300 && !seen.has(bt + k) && (recOk(k, od, ev, fav) || (dropped++, false))).slice(0, 3)
         .forEach(({ k, p, od, ev, line, of, omax, ofmax, evmax }) => recs.push({ kind: '1点', bt, keys: [k], od, of, ev, line, P: p, omax, ofmax, evmax }));
       const g = (s.groups || {})[bt];
       if (g) {
         [...(g.ev || []), ...(g.hit || [])].forEach((r) => {
           const [lab, n, P, syn, ev, evr, st2, cut, n2, P2, syn2, ev2, evr2, st3] = r;
           if (n < 2) return;
+          const keysOk = (ks, e) => e <= REC_EV_MAX && (!fav || ks.every((x) => String(x[0]).split('-').includes(fav)));
+          if ((cut && ev2 >= 1.1 && !keysOk(st3, ev2)) || (!cut && ev >= 1.1 && !keysOk(st2, ev))) { dropped++; return; }
           if (cut && ev2 >= 1.1) recs.push({ kind: '買い目群（✂切り）', bt, keys: st3.map((x) => x[0]), od: syn2, ev: ev2, P: P2, lab: lab + ' から ' + cut.map((k) => fmtKey(bt, k)).join('・') + ' を切る', group: true });
           else if (ev >= 1.1) recs.push({ kind: '買い目群', bt, keys: st2.map((x) => x[0]), od: syn, ev, P, lab, group: true });
         });
@@ -728,6 +740,7 @@ h2 { font-size: 15px; margin: 16px 0 6px; }
       for (const bt of VALIDATED) (s.types[bt] || []).filter(([k, p, od]) => p >= 0.03 && od <= 300).slice(0, 2).forEach((x) => { const r = R(x); near.push([bt, r.k, r.p, r.od, r.ev, r.line, r.of]); });
       near.sort((a, b) => b[4] - a[4]);
       return `<div class="card skip"><div class="th2">⏸ 今は見送り <span class="muted" style="font-weight:normal">2車複・ワイドで期待値1.10以上の買い目がありません</span></div>
+        ${dropped ? `<div class="note">⚠ 期待値1.10以上でも、100倍超・期待値2.0超（売れていない組のゆがみの可能性）・強い1番人気に逆らう組の ${dropped}件は、過去の検証で勝てていないため除外しました。</div>` : ''}
         ${near.slice(0, 3).map(([bt, k, p, od, ev, line, of]) => `<div class="rec c" style="margin:6px 0"><div>${tbadge(bt)} ${combo(bt, k)}
           <div class="muted" style="margin-top:4px">${reach(line, od) ? `今のオッズが <b>${x1(line)}倍以上</b>なら買い` : 'この時点では買い基準に届かない'}</div></div>
           <div></div><div class="line2">${evTwo(p, od, of, null, null)}</div></div>`).join('')}
@@ -736,6 +749,7 @@ h2 { font-size: 15px; margin: 16px 0 6px; }
     const early = ['C-15', 'C-10'].includes(st.snap);
     return `<div class="card hero"><h2>🔥 おすすめの買い目 <span class="muted" style="font-weight:normal">（${esc(SNAP_LABEL[st.snap] || '')}のオッズ${early ? '・参考' : ''}）</span></h2>
       ${early ? '<div class="note" style="margin-top:0">締切15・10分前のオッズは締切までに大きく動くため参考です。判定は締切5分前・2分前（最新）で。</div>' : ''}
+      ${fav ? `<div class="mini"><span class="pill">強い1番人気 ${car(fav)}（1着 ${pct((s.win || {})[fav])}）→ ${fav}番を含む組だけ</span></div>` : ''}
       ${uniq.slice(0, 6).map((r) => { const t = tier(r.ev); return `<div class="rec ${t}">
         <div>${tbadge(r.bt)} <span class="pill ${r.kind.startsWith('★') ? 'good' : ''}">${esc(r.kind)}</span>
           <div style="margin-top:6px" class="combos">${r.group ? r.keys.slice(0, 8).map((k) => combo(r.bt, k)).join('') + (r.keys.length > 8 ? ` <span class="muted">ほか${r.keys.length - 8}点</span>` : '') : combo(r.bt, r.keys[0], true)}</div></div>
@@ -744,6 +758,7 @@ h2 { font-size: 15px; margin: 16px 0 6px; }
         <div class="line2">${r.group ? `${r.keys.length}点・的中 ${pct(r.P)}・${esc(r.lab)}` : `当たる確率 ${r.P != null ? pct(r.P) : '-'}・今のオッズが<b>${x1(r.line)}倍以上なら買い</b>${r.lab ? '・' + esc(r.lab) : ''}`}</div>
         ${whyHtml(s, r)}
       </div>`; }).join('')}
+      ${dropped ? `<div class="note">⚠ ほかに ${dropped}件（100倍超・期待値2.0超・強い1番人気に逆らう組）は、過去の検証で勝てていないため除外しました。</div>` : ''}
       <div class="muted">1点100円など少額・一定額で。締切直前にもう一度倍率を確認し、基準を下回ったら見送り。</div></div>`;
   }
   // 「なぜこの買い目か」: 買い目の説明と、関わる選手のメモ

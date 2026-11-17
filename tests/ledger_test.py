@@ -98,6 +98,16 @@ def main():
     cal = json.loads((data2 / 'ledger' / 'calib.json').read_text(encoding='utf-8'))[DATE]
     check(sum(v[0] for k, v in cal['bands'].items() if k.startswith('2車複')) == 21 and len(cal['ll']) == 1,
           '締切2分前の確率の当たり方（2車複 21組・的中組の対数損失）を記録')
+    # REC2 の条件: 100倍以下・判定値2.0以下・強い1番人気（1着45%以上）はその選手を含む組だけ
+    s2 = dict(id='R2', bet_type='2車複', bet_types=['2車複', 'ワイド'], signal='EV_f', min=1.1, max_val=2.0, odds_max=100.0001, fav_min=0.45)
+    tk = [dict(type='2車複', key='1-2', prob=0.2, prob_market=0.18, odds=6.0, ev=1.2),      # 1番人気を含む → 残る
+          dict(type='2車複', key='3-4', prob=0.02, prob_market=0.01, odds=60.0, ev=1.2),    # 1番人気に逆らう → 除く
+          dict(type='ワイド', key='1-5', prob=0.01, prob_market=0.01, odds=150.0, ev=1.5),  # 100倍超 → 除く
+          dict(type='2車複', key='1-7', prob=0.05, prob_market=0.01, odds=50.0, ev=2.5)]    # 判定値2.0超 → 除く
+    strong = dict(riders=[dict(num=1, win=0.55), dict(num=2, win=0.2)])
+    weak = dict(riders=[dict(num=1, win=0.35), dict(num=2, win=0.3)])
+    check([t['key'] for t in L.select(s2, tk, strong)] == ['1-2'], 'REC2: 強い1番人気は含む組だけ・100倍超と判定値2.0超は除く')
+    check(sorted(t['key'] for t in L.select(s2, tk, weak)) == ['1-2', '3-4'], 'REC2: 1番人気が強くなければ逆らう組も残す')
     print('\n全テスト成功')
 
 
