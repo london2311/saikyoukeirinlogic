@@ -179,6 +179,7 @@ def main(argv=None, clock=None, sleep=time.sleep):
     ap.add_argument('--report', default='', help='毎朝の検証レポート（analysis/daily_report.py の出力 JSON）')
     ap.add_argument('--on-day-done', default='', help='その日のレースの記録が終わった時に実行するコマンド（{date} が日付に置き換わる。'
                     '結果の収集を始める用。終わるのは待たない）')
+    ap.add_argument('--settle-repo', default='', help='［賭けた］記録をレースごとにすぐ精算する（データ用リポジトリのフォルダ。live_settle.py）')
     ap.add_argument('--blocked-flag', default='', help='サーバーから拒否されたら、このファイルを作る（次の実行のリレーを止める）')
     a = ap.parse_args(argv)
     clock = clock or (lambda: datetime.now(N.JST))
@@ -189,6 +190,11 @@ def main(argv=None, clock=None, sleep=time.sleep):
     KC.DATA_DIR = Path(a.out_dir)
     stats = dict(snaps=0, failed=0)
     alerter = make_alerter(a) if a.alert else None
+    settler = None
+    if a.settle_repo:
+        import live_settle
+        settler = live_settle.LiveSettler(a.settle_repo)
+    a._settler = settler
     flushed_at = [clock()]
 
     def flush():
@@ -230,6 +236,8 @@ def main(argv=None, clock=None, sleep=time.sleep):
         print(f'記録 {stats["snaps"]}件 / 失敗 {stats["failed"]}件 / 最新の更新 {stats.get("live", 0)}回')
         if alerter is not None:
             print(alerter.summary())
+        if settler is not None:
+            print(settler.summary())
 
 
 def reload_site_inputs(a, site):
@@ -326,6 +334,15 @@ def run_day(a, date, until, offsets, stats, alerter, site, flush, flushed_at, cl
                     raise
                 except Exception as e:  # noqa: BLE001  最新の更新の失敗で記録を止めない
                     print(f'  ! {nk} 最新の更新に失敗 {type(e).__name__}', flush=True)
+        settler = getattr(a, '_settler', None)
+        if settler is not None and races:
+            try:
+                if settler.tick(races, date, clock()):
+                    flush()  # 精算をすぐ公開（ページが読む）
+            except N.Blocked:
+                raise
+            except Exception as e:  # noqa: BLE001  精算の失敗で記録を止めない
+                print(f'  ! 即時精算に失敗 {type(e).__name__}', flush=True)
         if races and remaining(races, date, offsets, done_nk(), clock()) == 0:
             print(f'{date} の記録すべきレースは終わりました', flush=True)
             return True
