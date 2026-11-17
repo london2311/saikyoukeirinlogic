@@ -81,6 +81,7 @@ def buy_line(p, ev_min=1.10, drift=None, bt='', snap=''):
 class SiteBuilder:
     def __init__(self, model, password, out_dir, date, cards_cache=None, cards_fn=None, push_fn=None, strategies=None, drift=None, report=None):
         self.drift = drift or {}
+        self.birthdays = None  # 選手の生年月日（rider_profile.Birthdays）。占いの表示だけに使い、期待値には使わない
         self.model = model
         self.out = Path(out_dir)
         self.date = date
@@ -176,6 +177,24 @@ class SiteBuilder:
                 self.cards[nk] = None
         return self.cards[nk]
 
+    def _luck(self, cards):
+        """選手の運気（六星占術・四柱推命）。{車番: [短い表示, 説明, 運気点]}。期待値の計算には入れない"""
+        if self.birthdays is None:
+            return {}
+        try:
+            import fortune as F
+            from datetime import date as _d
+            on = _d(int(self.date[:4]), int(self.date[4:6]), int(self.date[6:8]))
+            out = {}
+            for r in cards:
+                b = F.parse_date(self.birthdays.get(r.get('player_id', '')))
+                if b and str(r.get('absent', 0)) not in ('1', 'True', 'true'):
+                    f = F.fortune(b, on)
+                    out[str(int(r['car_number']))] = [F.short(f), F.text(f), F.score(f)]
+            return out
+        except Exception:  # noqa: BLE001  占いが作れなくても数値は出す
+            return {}
+
     def on_snapshot(self, nk, snap, start, odds_rows, now, deadline=None):
         import keirin_engine as E
         from datetime import timedelta
@@ -233,6 +252,9 @@ class SiteBuilder:
         race = self._load(f'{wt}.enc') or dict(id=wt, venue=venue, rn=int(nk[10:12]), start=f'{start:%H:%M}', snaps={})
         race['deadline'] = f'{deadline:%H:%M}'
         race['riders'] = riders
+        luck = self._luck(cards)
+        if luck:
+            race['luck'] = luck
         try:
             import reasons
             why = reasons.build(cards, res)
