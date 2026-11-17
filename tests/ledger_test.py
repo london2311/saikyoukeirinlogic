@@ -45,7 +45,8 @@ def main():
     snap = [dict(race_id=RID, date=DATE, race_number=5, snap=s, snap_at='', start_at='', official_dt='',
                  bet_type=o['bet_type'], combination=o['combination'], odds=o['odds'], odds_max=o.get('odds_max', ''),
                  popularity='', absent=0) for s in ('T-4', 'T-12') for o in odds]
-    write(y / 'odds_snap' / f'snap_{DATE}.csv', snap)
+    # 2レース目（まだ結果が無い）も記録してある日
+    write(y / 'odds_snap' / f'snap_{DATE}.csv', snap + [dict(snap[0], race_id='0623' + DATE)])
     write(y / 'racecards.csv', [dict(r, race_id=RID) for r in cards])
     write(y / 'races.csv', [dict(race_id=RID, date=DATE, venue_name='取手', cancel=0)])
     write(y / 'payoffs.csv', [dict(race_id=RID, bet_type='2車複', combination='1-2', payoff=900, popularity=1)])
@@ -56,7 +57,10 @@ def main():
         dict(id='F1', label='未来に登録', bet_type='2車複', signal='EV_f', min=1.10, registered='21000101'),
     ]}, ensure_ascii=False), encoding='utf-8')
 
-    L.main(['--data', str(data), '--strategies', str(strat)])
+    L.main(['--data', str(data), '--strategies', str(strat), '--today', DATE])
+    check(not (data / 'ledger' / 'ledger.csv').exists() or not list(csv.DictReader(open(data / 'ledger' / 'ledger.csv', encoding='utf-8'))),
+          '今日の分は、結果がそろうまで台帳に入れない（途中で結果を集めても）')
+    L.main(['--data', str(data), '--strategies', str(strat), '--today', '21000101'])
     led = list(csv.DictReader(open(data / 'ledger' / 'ledger.csv', encoding='utf-8')))
     check([(r['strategy'], r['snap'], r['key']) for r in led] == [('Q1', 'T-4', '1-2'), ('Q1', 'T-12', '1-2')] or
           sorted((r['strategy'], r['snap'], r['key']) for r in led) == [('Q1', 'T-12', '1-2'), ('Q1', 'T-4', '1-2')],
@@ -66,7 +70,7 @@ def main():
     rep = (data / 'ledger' / 'report.md').read_text(encoding='utf-8')
     check('Q1' in rep and '900.0%' in rep, '成績表に回収率を出す')
 
-    L.main(['--data', str(data), '--strategies', str(strat)])
+    L.main(['--data', str(data), '--strategies', str(strat), '--today', '21000101'])
     led2 = list(csv.DictReader(open(data / 'ledger' / 'ledger.csv', encoding='utf-8')))
     check(len(led2) == len(led), '同じ日を二重に数えない')
 
@@ -85,7 +89,7 @@ def main():
              registered='20990101', snaps=['C-2']),
         dict(id='Q', label='2車複', bet_type='2車複', signal='EV_f', min=1.10, registered='20990101', snaps=['C-2'])]},
         ensure_ascii=False), encoding='utf-8')
-    L.main(['--data', str(data2), '--strategies', str(strat2)])
+    L.main(['--data', str(data2), '--strategies', str(strat2), '--today', '21000101'])
     led3 = list(csv.DictReader(open(data2 / 'ledger' / 'ledger.csv', encoding='utf-8')))
     q = [r for r in led3 if r['strategy'] == 'Q']
     rr = [r for r in led3 if r['strategy'] == 'R']

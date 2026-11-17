@@ -8,7 +8,8 @@
   * 発走の数分後から、そのレースの結果ページを取得して払戻が出ていれば精算し、data/bets/settled_live.json に書く
     （的中・外れ・欠車を含む買い目は返還。確定オッズも付ける）
   * 毎朝・夜の台帳ジョブの settled.json が正式な精算。ページは両方を合わせて表示する（settled.json を優先）
-  * 取得するのは「記録がある」レースの結果だけ。払戻が出るまで2分おき、発走から2時間で諦める（夜の精算に任せる）
+  * 取得するのは「記録がある」レースの結果だけ。払戻が出るまで2分おき（発走から時間がたったレースは10分おき）。
+    記録ジョブが途中で止まっていた間に終わったレースも、直近2日分は精算する
 """
 import json
 import subprocess
@@ -21,7 +22,8 @@ JST = timezone(timedelta(hours=9))
 CHECK_BETS_MIN = 3        # 記録を読み直す間隔
 FIRST_AFTER_MIN = 6       # 発走から何分後に結果を見に行くか
 RETRY_MIN = 2             # 払戻が出ていなければ、この間隔で取り直す
-GIVE_UP_MIN = 120
+SLOW_AFTER_MIN = 60       # 発走からこれ以上たったレースは、取り直しの間隔を広げる
+SLOW_RETRY_MIN = 10
 
 
 def norm(bt, combo):
@@ -111,10 +113,11 @@ class LiveSettler:
                 continue
             d, nk, hhmm = nk_of[rid]
             st = N.start_dt(d, hhmm)
-            if st is None or now < st + timedelta(minutes=FIRST_AFTER_MIN) or now > st + timedelta(minutes=GIVE_UP_MIN):
+            if st is None or now < st + timedelta(minutes=FIRST_AFTER_MIN):
                 continue
             last = self.tried.get(rid)
-            if last and now - last < timedelta(minutes=RETRY_MIN):
+            retry = SLOW_RETRY_MIN if now > st + timedelta(minutes=SLOW_AFTER_MIN) else RETRY_MIN
+            if last and now - last < timedelta(minutes=retry):
                 continue
             self.tried[rid] = now
             self.stats['checked'] += 1
