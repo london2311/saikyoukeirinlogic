@@ -52,6 +52,9 @@ def test_parse_birth():
     assert RP.parse_birth(html) == '1983-01-02'
     assert RP.parse_birth('<th>生年月日</th><td>1990年7月15日</td>') == '1990-07-15'
     assert RP.parse_birth('<p>登録 2010/05/01</p>') is None
+    real = ('<div class="ProfileHeader_box_data">\n<span class="ProfileHeader_box_dataText">\n'
+            '<a href="https://keirin.netkeiba.com/db/search_result/player.html?pid=player_list&age=4">\n1985/05/06(41歳)\n</a>\n</span>')
+    assert RP.parse_birth(real) == '1985-05-06'
     assert RP.parse_birth('') is None
 
 
@@ -101,11 +104,21 @@ def test_site_luck_and_study():
                 w.writerow(['R1', '2026111813', c, 0, f'{c:06d}', 100 - c])
         with open(p / 'results.csv', 'w', newline='', encoding='utf-8') as f:
             w = csv.writer(f)
-            w.writerow(['race_id', 'car_number', 'order'])
+            w.writerow(['race_id', 'car_number', 'order', 'accident'])
             for c in range(1, 8):
-                w.writerow(['R1', c, c])
+                w.writerow(['R1', c, c if c < 7 else 0, '' if c < 7 else '落車'])
+        with open(p / 'odds_202611.csv', 'w', newline='', encoding='utf-8') as f:
+            w = csv.writer(f)
+            w.writerow(['race_id', 'bet_type', 'combination', 'odds'])
+            w.writerow(['R1', '3連単', '1-2-3', 2.0])
+            w.writerow(['R1', '3連単', '2-1-3', 8.0])
+            w.writerow(['R1', '3連単', '7-1-2', 100.0])
+        mk = FS.market_win(Path(d))
+        assert abs(sum(mk['R1'].values()) - 1) < 1e-9 and mk['R1'][1] > 0.7
         r = FS.study(Path(d), {f'{c:06d}': {'birth': f'198{c}-03-0{c}'} for c in range(1, 8)})
-        assert r['starts'] == 7 and '運気点' in r['table']
+        assert r['starts'] == 7 and set(r['sections']) == {'win', 'top3', 'fav_lose', 'long_win', 'accident'}
+        assert '運気点' in r['sections']['win']['table']
+        assert sum(v[1] for v in r['sections']['fav_lose']['table']['運気点']) == 1  # 1着確率45%以上は1番車だけ
 
 
 if __name__ == '__main__':

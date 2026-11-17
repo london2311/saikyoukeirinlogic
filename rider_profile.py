@@ -32,6 +32,13 @@ def parse_birth(html: str):
     if not html:
         return None
     t = _plain(html)
+    # netkeirin の選手ページ: 見出しの下に「1985/05/06(41歳)」（ラベルなし）
+    for d in re.finditer(_DATE + r'\s*[（(]\s*\d{1,3}\s*歳', t):
+        y, mo, da = map(int, d.groups())
+        try:
+            return datetime(y, mo, da).strftime('%Y-%m-%d')
+        except ValueError:
+            continue
     for m in re.finditer(r'生年月日|誕生日|生まれ', t):
         d = re.search(_DATE, t[m.end():m.end() + 80])
         if d:

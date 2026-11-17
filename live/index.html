@@ -576,12 +576,20 @@ h2 { font-size: 15px; margin: 16px 0 6px; }
         <div class="muted">z が ±3 を超えたら、運ではなく予想のずれ（⚠ に出ます）。2車複の的中組の当たり方 オッズとの差: ${ll.diff == null ? '-' : (ll.diff > 0 ? '+' : '') + ll.diff}（z=${ll.z == null ? '-' : ll.z}、${ll.n || 0}R。マイナスほどオッズより良い）</div></div>
       ${(() => {
         const L = R.luck;
-        if (!L || !L.table) return '<div class="card"><h2 style="margin-top:0">🔮 選手の運気と成績</h2><div class="muted">選手の生年月日を集めている途中です（記録ジョブの空き時間に少しずつ）。</div></div>';
-        const cats = ['運気点', '大殺界の年', '天中殺の日', '六星・年', '六星・月', '六星・日', '六星・今週', '四柱・今日の通変星'];
+        if (!L || !L.sections) return '<div class="card"><h2 style="margin-top:0">🔮 選手の運気と成績</h2><div class="muted">選手の生年月日を集めている途中です。</div></div>';
+        const tb = (rows) => `<div class="scroll"><table class="rep"><tr><th>区分</th><th>出走</th><th>実際</th><th>期待</th><th>z</th><th>前半/後半</th></tr>
+          ${rows.map(([v, n, a, e, z, z1, z2]) => `<tr><td>${esc(v)}</td><td>${n.toLocaleString()}</td><td><b>${pc(a)}</b></td><td class="muted">${pc(e)}</td><td class="${Math.abs(z) >= 3 ? 'bad' : ''}">${z >= 0 ? '+' : ''}${z.toFixed(1)}</td><td class="muted">${z1 >= 0 ? '+' : ''}${z1} / ${z2 >= 0 ? '+' : ''}${z2}</td></tr>`).join('')}</table></div>`;
+        const secs = Object.values(L.sections).map((sec) => {
+          const cats = Object.keys(sec.table);
+          const main = cats.filter((c) => (L.primary || []).includes(c)), rest = cats.filter((c) => !(L.primary || []).includes(c));
+          return `<h2>${esc(sec.label)}</h2>${main.map((c) => `<div class="muted" style="margin-top:6px">${esc(c)}</div>${tb(sec.table[c])}`).join('')}
+            ${rest.length ? `<details><summary style="cursor:pointer;color:var(--accent)">ほかの区分（参考・偶然の差が出やすい）</summary>${rest.map((c) => `<div class="muted" style="margin-top:6px">${esc(c)}</div>${tb(sec.table[c])}`).join('')}</details>` : ''}`;
+        }).join('');
+        const found = (L.found || []);
         return `<div class="card"><h2 style="margin-top:0">🔮 選手の運気と成績（検証中・期待値には未使用）</h2>
           <div class="muted">選手 ${L.riders}人・出走 ${L.starts.toLocaleString()}回。${esc(L.note || '')}</div>
-          ${cats.filter((c) => L.table[c]).map((c) => `<h2>${esc(c)}</h2><div class="scroll"><table class="rep"><tr><th>区分</th><th>出走</th><th>1着率</th><th>期待</th><th>z</th><th>3着内</th><th>期待</th></tr>
-            ${L.table[c].map(([v, n, w, ew, z, t3, e3]) => `<tr><td>${esc(v)}</td><td>${n.toLocaleString()}</td><td><b>${pc(w)}</b></td><td class="muted">${pc(ew)}</td><td class="${Math.abs(z) >= 3 ? 'bad' : ''}">${z >= 0 ? '+' : ''}${z.toFixed(1)}</td><td>${pc(t3)}</td><td class="muted">${pc(e3)}</td></tr>`).join('')}</table></div>`).join('')}</div>`;
+          <div style="margin:8px 0;padding:8px;border-radius:8px;background:var(--bg2, rgba(127,127,127,.08))">${found.length ? '<b>傾向あり（要確認）</b><ul>' + found.map((f) => `<li>${esc(f)}</li>`).join('') + '</ul>' : '<b>今のところ、偶然で説明できない傾向はありません</b>'}</div>
+          ${secs}</div>`;
       })()}
     </main>`;
     bindBack();
