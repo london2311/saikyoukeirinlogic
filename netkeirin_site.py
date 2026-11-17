@@ -55,9 +55,26 @@ def decrypt(key: bytes, blob: bytes):
     return json.loads(zlib.decompress(AESGCM(key).decrypt(blob[:12], blob[12:], None)).decode('utf-8'))
 
 
-def buy_line(p, ev_min=1.10):
+def buy_line(p, ev_min=1.10, drift=None, bt='', snap=''):
+    """「今のオッズが何倍以上なら買いか」。確定予想（今のオッズ × 下落の見込み）× 確率 が ev_min になる今のオッズ。
+    下落の学習が無ければ ev_min ÷ 確率。今のオッズをどれだけ上げても届かない時は None"""
     import math
-    return math.ceil(ev_min / p * 10 - 1e-9) / 10 if p > 0 else None
+    if not p or p <= 0:
+        return None
+    if not drift:
+        return math.ceil(ev_min / p * 10 - 1e-9) / 10
+
+    def ev_d(o):
+        return p * round(o * drift_ratio(drift, bt, snap, o, p * o), 1)
+    lo, hi = 1.0, 10000.0
+    if ev_d(hi) < ev_min:
+        return None
+    if ev_d(lo) >= ev_min:
+        return lo
+    for _ in range(40):  # 今のオッズが上がるほど確定予想の期待値も上がる（学習から）ので二分探索
+        mid = math.sqrt(lo * hi)
+        lo, hi = (mid, hi) if ev_d(mid) < ev_min else (lo, mid)
+    return math.ceil(hi * 10 - 1e-9) / 10
 
 
 class SiteBuilder:
@@ -170,7 +187,7 @@ class SiteBuilder:
         for t in res.get('tickets', []):
             # 締切後の下落を見込んだ「確定時の予想オッズ」と、それで計算した期待値（下落の学習データが無ければ今のオッズと同じ）
             of = round(t['odds'] * drift_ratio(self.drift, t['type'], dsnap, t['odds'], t['ev']), 1)
-            row = [t['key'], round(t['prob'], 5), t['odds'], round(t['ev'], 3), buy_line(t['prob']), of, round(t['prob'] * of, 3)]
+            row = [t['key'], round(t['prob'], 5), t['odds'], round(t['ev'], 3), buy_line(t['prob'], 1.10, self.drift, t['type'], dsnap), of, round(t['prob'] * of, 3)]
             if t['type'] == 'ワイド' and wmax.get(t['key'], 0) > t['odds']:
                 hi = wmax[t['key']]
                 hf = round(hi * drift_ratio(self.drift, t['type'], dsnap, hi, t['prob'] * hi), 1)
@@ -186,7 +203,7 @@ class SiteBuilder:
             import snapshot_ledger as L
             for s in self.strategies:
                 for t in L.select(s, res['tickets'], res):
-                    strat.append([s['id'], s['label'], t['type'], t['key'], t['odds'], round(t['ev'], 3), buy_line(t['prob'], s.get('min', 1.10))])
+                    strat.append([s['id'], s['label'], t['type'], t['key'], t['odds'], round(t['ev'], 3), buy_line(t['prob'], s.get('min', 1.10), self.drift, t['type'], dsnap)])
         groups = self._groups(res, cards, dsnap) if res.get('market_ok') else {}
         riders = []
         for r in sorted(cards, key=lambda x: int(x['car_number'])):

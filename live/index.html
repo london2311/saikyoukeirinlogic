@@ -609,7 +609,7 @@ h2 { font-size: 15px; margin: 16px 0 6px; }
       ${win}${riderMemo(s)}
       <div class="seg" id="view"><button data-v="single" class="${view === 'single' ? 'on' : ''}">1点ごと</button>
       <button data-v="group" class="${view === 'group' ? 'on' : ''}">買い目群（合成オッズ）</button></div>${evControl()}</div>${strat}${tables}
-      <p class="note">EV＝当たる確率×確定予想オッズ（締切後の下落を過去の記録から見込んだ倍率。「今→確定予想」で表示。学習前は今のオッズ）。ワイドは最低倍率。「買い基準」＝EVが1.10になる倍率。表示は「表示する期待値」以上・確率0.5%以上・300倍以下（「全○組を表示」で全部）。</p></main>`;
+      <p class="note">EV＝当たる確率×確定予想オッズ（締切後の下落を過去の記録から見込んだ倍率。「今→確定予想」で表示。学習前は今のオッズ）。ワイドは最低倍率。「買い基準」＝<b>今のオッズ</b>がこの倍率以上なら、確定予想（締切後の下落を見込んだ倍率）での期待値が1.10以上。表示は「表示する期待値」以上・確率0.5%以上・300倍以下（「全○組を表示」で全部）。</p></main>`;
     bindBack();
     app.querySelectorAll('.seg button[data-s]').forEach((b) => b.onclick = () => { st.snap = b.dataset.s; st.snapPicked = b.dataset.s !== 'LIVE'; render(); });
     bindAddBet();

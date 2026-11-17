@@ -90,6 +90,12 @@ def main():
     check('LIVE' in ent['snaps'] and ent['recs']['snap'] == 'LIVE' and abs(top[5] - round(top[2] * 0.5, 1)) < 1e-9,
           f'最新（LIVE）を保存し、締切2分前の下落の学習を使う {top[:6]}')
 
+    # 買い基準は「今のオッズ」で何倍以上か（確定予想 = 今 × 下落の見込み で期待値1.10になる今のオッズ）
+    check(S.buy_line(0.2) == 5.5 and S.buy_line(0.2, 1.10, drift, '2車複', 'C-2') in (10.9, 11.0),
+          f'買い基準は今のオッズ（下落0.5倍なら 5.5→11.0倍） {S.buy_line(0.2, 1.10, drift, "2車複", "C-2")}')
+    check(abs(top[4] - S.buy_line(top[1], 1.10, drift, '2車複', 'C-2')) < 1e-9 and top[2] * 0.5 * top[1] < 1.10 <= top[4] * 0.5 * top[1] + 0.02,
+          f'表の買い基準も同じ（今 {top[2]}倍 < 基準 {top[4]}倍 なので推奨にならない）')
+
     # 毎朝の検証レポート: 全体は report.enc、一覧には要約
     rep = dict(generated='2099-12-31 07:55', last='20991230', yesterday=dict(sum=dict(n=5, hits=1, roi=1.4)), alerts=['x'])
     sbr = S.SiteBuilder(E.load_model(), PW, tempfile.mkdtemp(), '20991231', cards_fn=lambda nk: cards, report=rep)
