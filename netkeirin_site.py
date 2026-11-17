@@ -244,7 +244,10 @@ class SiteBuilder:
                 if x[6] >= 1.0 and x[1] >= 0.005 and x[2] <= 300:
                     recs.append([bt, x[0], x[1], x[2], x[5], x[6], x[4]] + ([x[7]] if len(x) > 7 else []))
         recs.sort(key=lambda r: -r[5])
-        ent['recs'] = dict(snap=snap, at=f'{now:%H:%M:%S}', rows=recs[:6])
+        ent['recs'] = dict(snap=snap, at=f'{now:%H:%M:%S}', rows=recs[:12])
+        if win:  # 1番人気（融合した1着の確率が最も高い選手）と、その確率（推奨の条件に使う）
+            fc = max(win, key=win.get)
+            ent['fav'] = [fc, win[fc]]
         self.index['updated'] = f'{now:%Y-%m-%d %H:%M:%S}'
         self.dirty = True
         self.stats['updates'] += 1

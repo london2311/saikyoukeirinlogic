@@ -95,6 +95,12 @@ def select(strategy, tickets, res=None):
     out = []
     types = s.get('bet_types') or [s['bet_type']]
     res = res or {}
+    # fav_min: 1番人気（融合した1着の確率が最も高い選手）の1着の確率がこれ以上なら、その選手を含む組だけ
+    fav = None
+    if s.get('fav_min') and res.get('riders'):
+        top = max(res['riders'], key=lambda r: r.get('win', 0))
+        if top.get('win', 0) >= s['fav_min']:
+            fav = str(top['num'])
     for t in tickets:
         if t['type'] not in types:
             continue
@@ -106,6 +112,10 @@ def select(strategy, tickets, res=None):
         if val < s.get('min', 1.10) or t['prob'] < s.get('p_min', 0.0):
             continue
         if not (s.get('odds_min', 1.0) <= t['odds'] < s.get('odds_max', 1e9)):
+            continue
+        if val > s.get('max_val', 1e9):  # 期待値が極端に高い組は、売れていない組のゆがみの可能性が高い
+            continue
+        if fav and fav not in t['key'].split('-'):
             continue
         out.append(dict(t, val=val))
     out.sort(key=lambda x: -x['val'])

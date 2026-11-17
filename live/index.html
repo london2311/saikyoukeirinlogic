@@ -166,6 +166,10 @@ h2 { font-size: 15px; margin: 16px 0 6px; }
   }
   const tierPill = (ev) => { const t = tier(ev); return TIER_LABEL[t] ? `<span class="evb ${t}">${TIER_LABEL[t]}</span>` : ''; };
   // 買い基準（今のオッズ）が今の1.5倍を超える時は、締切までにそこまで上がることはまず無いので数字を出さない
+  // 推奨の条件（REC2）: 100倍以下・確定予想の期待値2.0以下・強い1番人気（1着45%以上）のレースは1番人気を含む組だけ
+  const REC_ODDS_MAX = 100, REC_EV_MAX = 2.0, FAV_MIN = 0.45;
+  const favOf = (win) => { const e = Object.entries(win || {}).sort((a, b) => b[1] - a[1])[0]; return e && e[1] >= FAV_MIN ? String(e[0]) : null; };
+  const recOk = (k, od, ev, fav) => od <= REC_ODDS_MAX && ev <= REC_EV_MAX && (!fav || String(k).split('-').includes(fav));
   const reach = (line, od) => line != null && od > 0 && line <= od * 1.5;
   const evb = (ev) => { const t = tier(ev); return `<span class="evb ${t}">${TIER_LABEL[t] ? TIER_LABEL[t] + ' ' : ''}EV ${ev.toFixed(2)}</span>`; };
 
@@ -203,6 +207,8 @@ h2 { font-size: 15px; margin: 16px 0 6px; }
 
   // ================================================================ 資金管理（賭けた記録は非公開の datebase に保存）
   const DATA_REPO = 'datebase';
+  // 資金管理の「＋買い目を追加」の入力（追加の後も残す。組だけ空にする）
+  const MF = { date: '', venue: '23', rn: '1', bt: '2車複', key: '', stake: '100', msg: '' };
   const INP = 'display:block;width:100%;margin-top:4px;padding:8px;font-size:16px;border:1px solid var(--line);border-radius:8px;background:var(--card);color:var(--ink)';
   const VENUES = { 11: '函館', 12: '青森', 13: 'いわき平', 21: '弥彦', 22: '前橋', 23: '取手', 24: '宇都宮', 25: '大宮', 26: '西武園', 27: '京王閣', 28: '立川', 31: '松戸', 32: '千葉', 34: '川崎', 35: '平塚', 36: '小田原', 37: '伊東', 38: '静岡', 42: '名古屋', 43: '岐阜', 44: '大垣', 45: '豊橋', 46: '富山', 47: '松阪', 48: '四日市', 51: '福井', 53: '奈良', 54: '向日町', 55: '和歌山', 56: '岸和田', 61: '玉野', 62: '広島', 63: '防府', 71: '高松', 73: '小松島', 74: '高知', 75: '松山', 81: '小倉', 83: '久留米', 84: '武雄', 85: '佐世保', 86: '別府', 87: '熊本' };
   const DEF_SET = { initial: 30000, stake: 100, evRec: 1.10, dayLoss: 3000, raceMax: 500 };
@@ -293,24 +299,56 @@ h2 { font-size: 15px; margin: 16px 0 6px; }
   }
   const yen = (v) => (v < 0 ? '−' : '') + Math.abs(Math.round(v)).toLocaleString() + '円';
   const betOf = (race, bt, k) => st.bank && st.bank.bets.find((x) => !x.deleted && x.race_id === race && x.bt === bt && x.key === k);
-  async function placeBet(rec, stake) {
-    if (!st.tok) { st.page = 'bank'; render(); return; }
+  const placeBet = (rec, stake) => placeBets([rec], stake);
+  // 同じレースの複数の買い目（フォーメーション等）をまとめて記録。1点ごとの金額 stake
+  async function placeBets(recs, stake, norender) {
+    if (!st.tok) { st.page = 'bank'; render(); return false; }
     if (!st.bank) await loadBank();
+    if (!recs.length) return false;
     const S = stats(st.bank), set = st.bank.set;
     const now = todayJST();
-    const rdate = /^\d{8}$/.test(String(rec.race).slice(4, 12)) ? String(rec.race).slice(4, 12) : ymd(now);  // レースの日（過去のレースも）
+    const race = recs[0].race;
+    const rdate = /^\d{8}$/.test(String(race).slice(4, 12)) ? String(race).slice(4, 12) : ymd(now);  // レースの日（過去のレースも）
+    const total = stake * recs.length;
     const warn = [];
     if (rdate === ymd(now) && S.tPL <= -set.dayLoss) warn.push(`今日の損失が上限（${yen(set.dayLoss)}）に達しています`);
-    const raceSum = st.bank.bets.filter((x) => !x.deleted && x.race_id === rec.race).reduce((a, x) => a + x.stake, 0);
-    if (raceSum + stake > set.raceMax) warn.push(`このレースの合計が上限（${yen(set.raceMax)}）を超えます`);
-    if (stake > S.bal) warn.push('残高が足りません');
-    if (warn.length && !confirm(warn.join('\n') + '\n\nそれでも記録しますか？')) return;
-    const bet = { id: `${rec.race}_${rec.bt}_${rec.key}_${Date.now()}`, placed_at: `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}T${now.toTimeString().slice(0, 8)}`, date: rdate,
+    const raceSum = st.bank.bets.filter((x) => !x.deleted && x.race_id === race).reduce((a, x) => a + x.stake, 0);
+    if (raceSum + total > set.raceMax) warn.push(`このレースの合計が上限（${yen(set.raceMax)}）を超えます`);
+    if (total > S.bal) warn.push('残高が足りません');
+    if (warn.length && !confirm(warn.join('\n') + '\n\nそれでも記録しますか？')) return false;
+    const at = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}T${now.toTimeString().slice(0, 8)}`;
+    const t0 = Date.now();
+    const bets = recs.map((rec, i) => ({ id: `${rec.race}_${rec.bt}_${rec.key}_${t0 + i}`, placed_at: at, date: rdate,
       race_id: rec.race, venue: rec.venue, rn: rec.rn, deadline: rec.deadline, bt: rec.bt, key: rec.key, stake,
-      odds: rec.od ?? null, odds_final: rec.of ?? null, ev: rec.ev ?? null, p: rec.p ?? null, snap: rec.snap || '', source: rec.source || 'board' };
-    await mutateMonth(rdate.slice(0, 6), (arr) => [...arr, bet]);
-    st.bank.bets.push(bet);
-    render();
+      odds: rec.od ?? null, odds_final: rec.of ?? null, ev: rec.ev ?? null, p: rec.p ?? null, snap: rec.snap || '', source: rec.source || 'board' }));
+    await mutateMonth(rdate.slice(0, 6), (arr) => [...arr, ...bets]);
+    st.bank.bets.push(...bets);
+    if (!norender) render();
+    return true;
+  }
+  // 組の入力 → 買い目の一覧。「-」「=」「>」などで区切った各位置に複数の車番（例 2車単 2-134、3連単 3-1-456、3連複 1-23-4567）。
+  // 区切りが無ければ1点（例 12・312）。2車複・ワイド・3連複は番号の順番をそろえて重複を除く
+  function expandKeys(bt, text) {
+    const n = bt.startsWith('3') ? 3 : 2;
+    const t = String(text || '').trim();
+    if (!t) return { keys: [], err: '' };
+    let groups = t.split(/[^0-9]+/).filter(Boolean);
+    if (groups.length === 1) {
+      if (groups[0].length !== n) return { keys: [], err: `区切って入力してください（例 ${n === 3 ? '3-1-456' : '2-134'}）` };
+      groups = groups[0].split('');
+    }
+    if (groups.length !== n) return { keys: [], err: `${bt} は ${n} つの位置で入力してください（例 ${n === 3 ? '3-1-456' : '2-134'}）` };
+    const sets = groups.map((g) => [...new Set(g.split('').map(Number))]);
+    if (sets.some((s) => s.some((c) => !(c >= 1 && c <= 9)))) return { keys: [], err: '車番は 1〜9 で入力してください' };
+    const unordered = ['2車複', 'ワイド', '3連複'].includes(bt);
+    const out = new Set();
+    const rec = (i, cur) => {
+      if (i === n) { if (new Set(cur).size === n) out.add((unordered ? [...cur].sort((a, b) => a - b) : cur).join('-')); return; }
+      sets[i].forEach((c) => rec(i + 1, [...cur, c]));
+    };
+    rec(0, []);
+    const keys = [...out];
+    return keys.length ? { keys, err: '' } : { keys: [], err: '成立する買い目がありません（同じ車番だけになっています）' };
   }
   async function cancelBet(id) {
     const b = st.bank.bets.find((x) => x.id === id);
@@ -332,8 +370,9 @@ h2 { font-size: 15px; margin: 16px 0 6px; }
       const m = minutesTo(r.deadline || r.start);
       // 締切15・10分前のオッズは締切までに大きく動く（下落の学習もまだ荒い）ので、推奨は締切5分前・2分前・最新のオッズだけ
       if (!r.recs || m == null || m < 0 || !['C-5', 'C-2', 'LIVE'].includes(r.recs.snap)) return;
+      const fav = r.fav && r.fav[1] >= FAV_MIN ? String(r.fav[0]) : null;
       r.recs.rows.forEach(([bt, k, p, od, of, ev, line, omax]) => {
-        if (ev >= evRec) out.push({ race: id, venue: r.venue, rn: r.rn, deadline: r.deadline, start: r.start, m, bt, key: k, p, od, of, ev, line, omax, snap: r.recs.snap, at: r.recs.at });
+        if (ev >= evRec && recOk(k, od, ev, fav)) out.push({ race: id, venue: r.venue, rn: r.rn, deadline: r.deadline, start: r.start, m, bt, key: k, p, od, of, ev, line, omax, snap: r.recs.snap, at: r.recs.at });
       });
     });
     return out.sort((a, b) => a.m - b.m || b.ev - a.ev);
@@ -358,7 +397,7 @@ h2 { font-size: 15px; margin: 16px 0 6px; }
     }).join('');
     const R0 = st.index.report;
     const repLine = R0 && R0.last ? `<div class="mini toreport" style="cursor:pointer">📊 ${esc(String(R0.last).slice(4, 6))}/${esc(String(R0.last).slice(6))} の推奨 ${R0.n}点・的中 ${R0.hits}・回収率 ${R0.roi == null ? '-' : (R0.roi * 100).toFixed(0) + '%'}${R0.alerts ? ` <span class="pill warn">⚠ ${R0.alerts}件</span>` : ' <span class="pill good">異常なし</span>'}</div>` : '';
-    return `<div class="card hero" style="border:2px solid #2f5bea">${repLine}<h2>🎯 今の推奨（1点・${yen(stakeOf())}）<span class="muted" style="font-weight:normal">全場・締切の早い順・確定予想の期待値 ${(st.bank ? st.bank.set.evRec : DEF_SET.evRec).toFixed(2)} 以上</span></h2>
+    return `<div class="card hero" style="border:2px solid #2f5bea">${repLine}<h2>🎯 今の推奨（1点・${yen(stakeOf())}）<span class="muted" style="font-weight:normal">全場・締切の早い順・確定予想の期待値 ${(st.bank ? st.bank.set.evRec : DEF_SET.evRec).toFixed(2)} 以上・100倍以下・強い1番人気は含む組だけ</span></h2>
       ${bankLine}${cards || '<div class="skip" style="margin-top:8px">⏸ 今は推奨がありません（見送り）。各レースの締切5分前から判定します（締切6分前からは30秒ごとに最新）。</div>'}</div>`;
   }
   function bindBoard() {
@@ -397,6 +436,7 @@ h2 { font-size: 15px; margin: 16px 0 6px; }
     }
     if (!st.bank) { app.innerHTML = head + '<main><div class="card muted">読み込み中…</div></main>'; bindBack(); loadBank().then(render).catch((e) => alert(e.message)); return; }
     const b = st.bank, S = stats(b), set = b.set;
+    if (!MF.date) { MF.date = ymd(todayJST()).replace(/^(\d{4})(\d{2})(\d{2})$/, '$1-$2-$3'); MF.stake = String(set.stake); }
     const w = 340, h = 90, c = S.curve, mn = Math.min(...c), mx = Math.max(...c), sx = (i) => (c.length > 1 ? i * w / (c.length - 1) : 0), sy = (v) => mx === mn ? h / 2 : h - (v - mn) * h / (mx - mn);
     const path = c.map((v, i) => `${i ? 'L' : 'M'}${sx(i).toFixed(1)},${sy(v).toFixed(1)}`).join('');
     const kpi = (lab, v, cls = '') => `<div class="card" style="margin:0;padding:10px"><div class="muted">${lab}</div><div style="font-size:20px;font-weight:800" class="${cls}">${v}</div></div>`;
@@ -421,32 +461,53 @@ h2 { font-size: 15px; margin: 16px 0 6px; }
       <div class="card"><h2 style="margin-top:0">＋ 買い目を追加（過去のレースも）</h2>
         <div class="muted">ボードに載っていないレースや、記録し忘れた分。結果と確定オッズは、その日の結果の収集のあとに自動で精算されます。</div>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:8px">
-          <label>日付<input id="m_date" type="date" value="${ymd(todayJST()).replace(/^(\d{4})(\d{2})(\d{2})$/, '$1-$2-$3')}" style="${INP}"></label>
-          <label>場<select id="m_venue" style="${INP}">${Object.entries(VENUES).map(([c, n]) => `<option value="${c}">${esc(n)}</option>`).join('')}</select></label>
-          <label>レース<select id="m_rn" style="${INP}">${Array.from({ length: 12 }, (_, i) => `<option value="${i + 1}">${i + 1}R</option>`).join('')}</select></label>
-          <label>券種<select id="m_bt" style="${INP}">${['2車複', '2車単', 'ワイド', '3連複', '3連単'].map((t) => `<option>${t}</option>`).join('')}</select></label>
-          <label>組（例 1-2 / 1-2-3）<input id="m_key" inputmode="numeric" placeholder="1-2" style="${INP}"></label>
-          <label>金額（円）<input id="m_stake" type="number" min="100" step="100" value="${set.stake}" style="${INP}"></label>
+          <label>日付<input id="m_date" type="date" value="${esc(MF.date)}" style="${INP}"></label>
+          <label>場<select id="m_venue" style="${INP}">${Object.entries(VENUES).map(([c, n]) => `<option value="${c}" ${String(MF.venue) === c ? 'selected' : ''}>${esc(n)}</option>`).join('')}</select></label>
+          <label>レース<select id="m_rn" style="${INP}">${Array.from({ length: 12 }, (_, i) => `<option value="${i + 1}" ${+MF.rn === i + 1 ? 'selected' : ''}>${i + 1}R</option>`).join('')}</select></label>
+          <label>券種<select id="m_bt" style="${INP}">${['2車複', '2車単', 'ワイド', '3連複', '3連単'].map((t) => `<option ${MF.bt === t ? 'selected' : ''}>${t}</option>`).join('')}</select></label>
+          <label>組（例 2-134 / 3-1-456）<span style="display:flex;gap:6px;margin-top:4px"><input id="m_key" inputmode="decimal" autocomplete="off" placeholder="2-134 または 2.134" value="${esc(MF.key)}" style="${INP};margin-top:0;flex:1"><button type="button" id="m_dash" class="more" style="padding:0 12px;font-size:20px;border:1px solid var(--line);border-radius:8px">－</button></span></label>
+          <label>1点の金額（円）<input id="m_stake" type="number" min="100" step="100" value="${esc(MF.stake)}" style="${INP}"></label>
         </div>
-        <button id="m_add" class="betbtn" style="width:100%;margin-top:10px">追加する</button><div class="err" id="m_err"></div></div>
+        <div id="m_prev" class="muted" style="margin-top:6px"></div>
+        <button id="m_add" class="betbtn" style="width:100%;margin-top:10px">追加する</button><div class="err" id="m_err"></div>
+        ${MF.msg ? `<div class="pill good" style="margin-top:6px">✅ ${esc(MF.msg)}</div>` : ''}</div>
       <div class="card"><h2 style="margin-top:0">履歴</h2><div class="scroll"><table><tr><th>レース・買い目</th><th>金額</th><th>オッズ</th><th>結果</th></tr>${rows || '<tr><td colspan="4" class="muted">まだ記録がありません</td></tr>'}</table></div></div></main>`;
     bindBack(); bindBoard();
+    // 入力した値は追加の後も残す（同じレースの買い目を続けて入れられるように）
+    const readMF = () => {
+      MF.date = document.getElementById('m_date').value; MF.venue = document.getElementById('m_venue').value;
+      MF.rn = document.getElementById('m_rn').value; MF.bt = document.getElementById('m_bt').value;
+      MF.key = document.getElementById('m_key').value; MF.stake = document.getElementById('m_stake').value;
+    };
+    const preview = () => {
+      readMF();
+      const { keys, err } = expandKeys(MF.bt, MF.key);
+      const stake = Math.round((parseInt(MF.stake, 10) || 0) / 100) * 100;
+      document.getElementById('m_prev').innerHTML = err ? `<span style="color:var(--bad)">${esc(err)}</span>` : keys.length
+        ? `→ <b>${keys.length}点</b>（合計 ${yen(stake * keys.length)}）: ${keys.slice(0, 30).map((k) => esc(k)).join('・')}${keys.length > 30 ? ' ほか' : ''}` : '';
+    };
+    ['m_date', 'm_venue', 'm_rn', 'm_bt', 'm_key', 'm_stake'].forEach((id) => { const el = document.getElementById(id); el.oninput = preview; el.onchange = preview; });
+    // スマホの数字キーボードには「-」が無いので、「－」ボタンで入れる（「.」でも区切れる）
+    document.getElementById('m_dash').onclick = (e) => { e.preventDefault(); const k = document.getElementById('m_key'); k.value += '-'; k.focus(); preview(); };
+    preview();
     document.getElementById('m_add').onclick = async () => {
+      readMF();
       const err = document.getElementById('m_err');
-      const dt = document.getElementById('m_date').value.replace(/-/g, '');
-      const vc = document.getElementById('m_venue').value, rn = +document.getElementById('m_rn').value, bt = document.getElementById('m_bt').value;
-      const n = bt.startsWith('3') ? 3 : 2;
-      let parts = document.getElementById('m_key').value.trim().split(/[^0-9]+/).filter(Boolean);
-      if (parts.length === 1 && parts[0].length === n) parts = parts[0].split('');
-      const cars = parts.map(Number);
+      const dt = MF.date.replace(/-/g, '');
+      const vc = MF.venue, rn = +MF.rn, bt = MF.bt;
       if (!/^\d{8}$/.test(dt) || dt > ymd(todayJST())) { err.textContent = '日付を確かめてください（今日まで）'; return; }
-      if (cars.length !== n || cars.some((c) => !(c >= 1 && c <= 9)) || new Set(cars).size !== n) { err.textContent = `${bt} は ${n} つの違う車番で入力してください（例 ${n === 3 ? '1-2-3' : '1-2'}）`; return; }
-      const key = (['2車複', 'ワイド', '3連複'].includes(bt) ? [...cars].sort((a, b) => a - b) : cars).join('-');
-      const stake = Math.round((parseInt(document.getElementById('m_stake').value, 10) || 0) / 100) * 100;
+      const { keys, err: kerr } = expandKeys(bt, MF.key);
+      if (kerr || !keys.length) { err.textContent = kerr || '組を入力してください'; return; }
+      const stake = Math.round((parseInt(MF.stake, 10) || 0) / 100) * 100;
       if (stake < 100) { err.textContent = '金額は100円以上'; return; }
+      if (keys.length > 1 && !confirm(`${VENUES[vc]}${rn}R ${bt} ${keys.length}点（1点 ${yen(stake)}・合計 ${yen(stake * keys.length)}）を記録します。\n${keys.join('・')}`)) return;
       const race = `${String(rn).padStart(2, '0')}${vc}${dt}`;
       err.textContent = '記録中…';
-      try { await placeBet({ race, venue: VENUES[vc], rn, bt, key, source: 'manual' }, stake); } catch (e) { err.textContent = e.message; }
+      try {
+        const ok = await placeBets(keys.map((key) => ({ race, venue: VENUES[vc], rn, bt, key, source: 'manual' })), stake, true);
+        if (ok) { MF.key = ''; MF.msg = `${VENUES[vc]}${rn}R ${bt} ${keys.length}点を記録しました`; }
+        render();
+      } catch (e) { err.textContent = e.message; }
     };
     document.getElementById('saveset').onclick = async () => {
       const next = { ...set };
@@ -644,23 +705,28 @@ h2 { font-size: 15px; margin: 16px 0 6px; }
   function hero(s) {
     const recs = [];
     const seen = new Set();
+    const fav = favOf(s.win);
+    let dropped = 0;
     const rowOf = (bt, k) => { const x = (s.types[bt] || []).find((r) => r[0] === k); return x ? R(x) : null; };
     (s.strat || []).forEach(([id, lab, bt, k, od, ev, line]) => {
       // 事前登録の買い方は「今のオッズでの期待値」で該当を判定している（検証の条件は変えない）。
       // おすすめに出すのは、確定予想（締切後の下落を見込む）でも期待値1.10以上のものだけ
       const r = rowOf(bt, k);
       if (!r || r.ev < 1.1) return;
+      if (!recOk(k, r.od, r.ev, fav)) { dropped++; return; }
       seen.add(bt + k);
       recs.push({ kind: '★ 事前登録', bt, keys: [k], od, of: r.of, ev: r.ev, line: r.line, P: r.p, lab, omax: r.omax, ofmax: r.ofmax, evmax: r.evmax });
     });
     for (const bt of VALIDATED) {
-      (s.types[bt] || []).map(R).filter(({ k, p, od, ev }) => ev >= 1.1 && p >= 0.005 && od <= 300 && !seen.has(bt + k)).slice(0, 3)
+      (s.types[bt] || []).map(R).filter(({ k, p, od, ev }) => ev >= 1.1 && p >= 0.005 && od <= 300 && !seen.has(bt + k) && (recOk(k, od, ev, fav) || (dropped++, false))).slice(0, 3)
         .forEach(({ k, p, od, ev, line, of, omax, ofmax, evmax }) => recs.push({ kind: '1点', bt, keys: [k], od, of, ev, line, P: p, omax, ofmax, evmax }));
       const g = (s.groups || {})[bt];
       if (g) {
         [...(g.ev || []), ...(g.hit || [])].forEach((r) => {
           const [lab, n, P, syn, ev, evr, st2, cut, n2, P2, syn2, ev2, evr2, st3] = r;
           if (n < 2) return;
+          const keysOk = (ks, e) => e <= REC_EV_MAX && (!fav || ks.every((x) => String(x[0]).split('-').includes(fav)));
+          if ((cut && ev2 >= 1.1 && !keysOk(st3, ev2)) || (!cut && ev >= 1.1 && !keysOk(st2, ev))) { dropped++; return; }
           if (cut && ev2 >= 1.1) recs.push({ kind: '買い目群（✂切り）', bt, keys: st3.map((x) => x[0]), od: syn2, ev: ev2, P: P2, lab: lab + ' から ' + cut.map((k) => fmtKey(bt, k)).join('・') + ' を切る', group: true });
           else if (ev >= 1.1) recs.push({ kind: '買い目群', bt, keys: st2.map((x) => x[0]), od: syn, ev, P, lab, group: true });
         });
@@ -674,6 +740,7 @@ h2 { font-size: 15px; margin: 16px 0 6px; }
       for (const bt of VALIDATED) (s.types[bt] || []).filter(([k, p, od]) => p >= 0.03 && od <= 300).slice(0, 2).forEach((x) => { const r = R(x); near.push([bt, r.k, r.p, r.od, r.ev, r.line, r.of]); });
       near.sort((a, b) => b[4] - a[4]);
       return `<div class="card skip"><div class="th2">⏸ 今は見送り <span class="muted" style="font-weight:normal">2車複・ワイドで期待値1.10以上の買い目がありません</span></div>
+        ${dropped ? `<div class="note">⚠ 期待値1.10以上でも、100倍超・期待値2.0超（売れていない組のゆがみの可能性）・強い1番人気に逆らう組の ${dropped}件は、過去の検証で勝てていないため除外しました。</div>` : ''}
         ${near.slice(0, 3).map(([bt, k, p, od, ev, line, of]) => `<div class="rec c" style="margin:6px 0"><div>${tbadge(bt)} ${combo(bt, k)}
           <div class="muted" style="margin-top:4px">${reach(line, od) ? `今のオッズが <b>${x1(line)}倍以上</b>なら買い` : 'この時点では買い基準に届かない'}</div></div>
           <div></div><div class="line2">${evTwo(p, od, of, null, null)}</div></div>`).join('')}
@@ -682,6 +749,7 @@ h2 { font-size: 15px; margin: 16px 0 6px; }
     const early = ['C-15', 'C-10'].includes(st.snap);
     return `<div class="card hero"><h2>🔥 おすすめの買い目 <span class="muted" style="font-weight:normal">（${esc(SNAP_LABEL[st.snap] || '')}のオッズ${early ? '・参考' : ''}）</span></h2>
       ${early ? '<div class="note" style="margin-top:0">締切15・10分前のオッズは締切までに大きく動くため参考です。判定は締切5分前・2分前（最新）で。</div>' : ''}
+      ${fav ? `<div class="mini"><span class="pill">強い1番人気 ${car(fav)}（1着 ${pct((s.win || {})[fav])}）→ ${fav}番を含む組だけ</span></div>` : ''}
       ${uniq.slice(0, 6).map((r) => { const t = tier(r.ev); return `<div class="rec ${t}">
         <div>${tbadge(r.bt)} <span class="pill ${r.kind.startsWith('★') ? 'good' : ''}">${esc(r.kind)}</span>
           <div style="margin-top:6px" class="combos">${r.group ? r.keys.slice(0, 8).map((k) => combo(r.bt, k)).join('') + (r.keys.length > 8 ? ` <span class="muted">ほか${r.keys.length - 8}点</span>` : '') : combo(r.bt, r.keys[0], true)}</div></div>
@@ -690,6 +758,7 @@ h2 { font-size: 15px; margin: 16px 0 6px; }
         <div class="line2">${r.group ? `${r.keys.length}点・的中 ${pct(r.P)}・${esc(r.lab)}` : `当たる確率 ${r.P != null ? pct(r.P) : '-'}・今のオッズが<b>${x1(r.line)}倍以上なら買い</b>${r.lab ? '・' + esc(r.lab) : ''}`}</div>
         ${whyHtml(s, r)}
       </div>`; }).join('')}
+      ${dropped ? `<div class="note">⚠ ほかに ${dropped}件（100倍超・期待値2.0超・強い1番人気に逆らう組）は、過去の検証で勝てていないため除外しました。</div>` : ''}
       <div class="muted">1点100円など少額・一定額で。締切直前にもう一度倍率を確認し、基準を下回ったら見送り。</div></div>`;
   }
   // 「なぜこの買い目か」: 買い目の説明と、関わる選手のメモ

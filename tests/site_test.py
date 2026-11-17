@@ -87,6 +87,7 @@ def main():
     rl = sbl.on_snapshot(NK, 'LIVE', start, odds, start - timedelta(minutes=7))  # 締切 14:55 の2分前
     ent = sbl.index['races']['052320991231']
     top = rl['snaps']['LIVE']['types']['2車複'][0]
+    check(ent.get('fav') and ent['fav'][1] == max(rl['snaps']['LIVE']['win'].values()), f'一覧に1番人気とその1着の確率 {ent.get("fav")}')
     check('LIVE' in ent['snaps'] and ent['recs']['snap'] == 'LIVE' and abs(top[5] - round(top[2] * 0.5, 1)) < 1e-9,
           f'最新（LIVE）を保存し、締切2分前の下落の学習を使う {top[:6]}')
 
