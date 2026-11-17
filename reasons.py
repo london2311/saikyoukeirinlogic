@@ -157,6 +157,7 @@ def build(cards, res, ev_min=0.9, types=('2車複', 'ワイド', '3連複', '2�
         for t in ts:
             if t['ev'] < ev_min or t['prob'] < 0.005:
                 continue
-            own = (1.0 / t['odds']) / inv if inv else None
+            # その券種のオッズが示す確率（ワイドは当たりが3組あるので合計3になるように）
+            own = (1.0 / t['odds']) / inv * (3 if bt == 'ワイド' else 1) if inv else None
             tk[f'{bt}|{t["key"]}'] = ticket_reason(bt, t['key'], t, own, lines)
     return dict(riders={str(k): v for k, v in notes.items()}, tickets=tk)

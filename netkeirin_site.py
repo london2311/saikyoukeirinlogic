@@ -233,7 +233,10 @@ class SiteBuilder:
             if rows:
                 best.append([bt, rows[0][0], rows[0][2], rows[0][6], rows[0][5]])
         grp = sum(1 for bt, v in groups.items() for g in v.get('ev', []) if max(g[4], g[11] if len(g) > 11 else 0) >= 1.10)
-        ent['best'] = dict(snap=snap, rows=best, strat=len(strat), grp=grp)
+        evf = {(bt, x[0]): x[6] for bt, rows in types.items() for x in rows}
+        # 一覧の「おすすめあり」は、事前登録の該当でも確定予想（下落を見込んだ）期待値1.10以上のものだけ数える
+        strat_ok = sum(1 for x in strat if evf.get((x[2], x[3]), 0) >= 1.10)
+        ent['best'] = dict(snap=snap, rows=best, strat=strat_ok, grp=grp)
         # 1点買いの推奨候補（メイン掲示板用）: 2車複・ワイドで確定予想の期待値 1.0 以上（表示の基準は画面で決める）
         recs = []
         for bt in sorted(VALIDATED):
