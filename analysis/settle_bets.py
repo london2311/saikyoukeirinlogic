@@ -16,10 +16,12 @@ import csv
 import glob
 import json
 import os
+import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 JST = timezone(timedelta(hours=9))
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 
 def norm(bt, combo):
@@ -63,6 +65,22 @@ def load_results(data: Path, race_ids: set):
     return pay, cancel, absent, done
 
 
+def final_odds_of(data: Path, bets):
+    """賭けた組の確定オッズ {賭けID: 倍率}（data/YYYY/odds/odds_YYYYMMDD.csv。的中組は払戻÷100）"""
+    import odds_drift as D
+    out, cache = {}, {}
+    for b in bets:
+        date = str(b.get('race_id', ''))[4:12]
+        if len(date) != 8 or not date.isdigit():
+            continue
+        if date not in cache:
+            cache[date] = D.final_odds(data, date)
+        o = cache[date].get((b['race_id'], b['bt'], D.norm(b['bt'], b['key'])))
+        if o:
+            out[b['id']] = round(o, 1)
+    return out
+
+
 def settle(data: Path, now=None):
     bets = []
     for p in sorted(glob.glob(str(data / 'bets' / 'bets_*.json'))):
@@ -79,6 +97,10 @@ def settle(data: Path, now=None):
     if not todo:
         return settled, 0
     pay, cancel, absent, done = load_results(data, {b['race_id'] for b in todo})
+    try:
+        fodds = final_odds_of(data, todo)
+    except Exception:  # noqa: BLE001  確定オッズが読めなくても精算はする
+        fodds = {}
     stamp = (now or datetime.now(JST)).strftime('%Y-%m-%d %H:%M')
     n = 0
     for b in todo:
@@ -91,7 +113,7 @@ def settle(data: Path, now=None):
         elif rid in done:
             v = pay.get(rid, {}).get((bt, key))
             settled[b['id']] = dict(result='hit' if v else 'miss', payout=round(stake * v / 100.0) if v else 0,
-                                    payoff=v, settled_at=stamp)
+                                    payoff=v, settled_at=stamp, odds_final=round(v / 100.0, 1) if v else fodds.get(b['id']))
             n += 1
     out_path.parent.mkdir(parents=True, exist_ok=True)
     json.dump(settled, open(out_path, 'w', encoding='utf-8'), ensure_ascii=False, indent=1, sort_keys=True)
