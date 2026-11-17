@@ -315,6 +315,11 @@ def run_day(a, date, until, offsets, stats, alerter, site, flush, flushed_at, cl
                 if site is not None:
                     try:
                         site.on_snapshot(nk, snap, st, rows, clock(), deadline=dl)
+                        settler = getattr(a, '_settler', None)
+                        if snap == 'C-2' and settler is not None and hasattr(site, 'rec_picks'):
+                            wt = N.to_wt_race_id(nk)
+                            if settler.add_recs(date, wt, site.rec_picks(wt), clock()):
+                                site.set_today(settler.today_summary(date))
                     except N.Blocked:
                         raise
                     except Exception as e:  # noqa: BLE001
@@ -339,6 +344,8 @@ def run_day(a, date, until, offsets, stats, alerter, site, flush, flushed_at, cl
             try:
                 if settler.tick(races, date, clock()):
                     flush()  # 精算をすぐ公開（ページが読む）
+                    if site is not None and hasattr(site, 'set_today'):
+                        site.set_today(settler.today_summary(date))
             except N.Blocked:
                 raise
             except Exception as e:  # noqa: BLE001  精算の失敗で記録を止めない

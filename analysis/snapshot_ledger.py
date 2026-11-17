@@ -30,6 +30,9 @@ import odds_drift as DR  # noqa: E402
 import train_model as T  # noqa: E402
 
 CALIB_TYPES = ('2車複', 'ワイド')
+# 提案のあり方を比べるための候補（探索用）: 締切5分前・2分前の 2車複・ワイド（確率0.5%以上・300倍以下）
+CAND_FIELDS = ['date', 'race_id', 'snap', 'bet_type', 'key', 'prob', 'odds', 'ev_now', 'ev_d', 'odds_final', 'has_fav', 'fav_win', 'payoff']
+CAND_SNAPS = ('C-5', 'C-2')
 EV_BANDS = ((1.1, 'EV1.10以上'), (1.0, 'EV1.00-1.10'), (0.0, 'EV1.00未満'))
 
 LEDGER_FIELDS = ['date', 'race_id', 'venue', 'snap', 'strategy', 'bet_type', 'key', 'prob', 'prob_market', 'odds', 'ev',
@@ -200,10 +203,24 @@ def add_calib(calib, res, pay):
         calib['ll'].append([round(-math.log(win[0]['prob']), 5), round(-math.log(win[0]['prob_market']), 5)])
 
 
-def evaluate_day(model, strategies, data: Path, date: str, drift=None, calib=None):
+def add_cands(cands, date, rid, snap, res, drift, pay, fin):
+    top = max(res['riders'], key=lambda r: r.get('win', 0)) if res.get('riders') else None
+    fav, fw = (str(top['num']), round(top['win'], 4)) if top else ('', 0.0)
+    for t in res['tickets']:
+        if t['type'] not in CALIB_TYPES or t['prob'] < 0.005 or t['odds'] > 300:
+            continue
+        of = round(t['odds'] * DR.ratio(drift, t['type'], snap, t['odds'], t['ev']), 1)
+        f = fin.get((rid, t['type'], DR.norm(t['type'], t['key'])))
+        cands.append(dict(date=date, race_id=rid, snap=snap, bet_type=t['type'], key=t['key'], prob=round(t['prob'], 5),
+                          odds=t['odds'], ev_now=round(t['ev'], 4), ev_d=round(t['prob'] * of, 4), odds_final=f if f else '',
+                          has_fav=int(fav in t['key'].split('-')), fav_win=fw, payoff=pay.get((t['type'], t['key']), 0.0)))
+
+
+def evaluate_day(model, strategies, data: Path, date: str, drift=None, calib=None, cands=None):
     drift = drift or {}
     calib = calib if calib is not None else dict(bands={}, ll=[])
     snaps, cards, pay, venue, settled = load_day(data, date)
+    fin = DR.final_odds(data, date) if cands is not None else {}
     rows = []
     for rid in sorted(snaps):
         if rid not in settled or rid not in cards:
@@ -215,6 +232,8 @@ def evaluate_day(model, strategies, data: Path, date: str, drift=None, calib=Non
             res['_snap'], res['_drift'] = snap, drift
             if snap == 'C-2':
                 add_calib(calib, res, pay[rid])
+            if cands is not None and snap in CAND_SNAPS:
+                add_cands(cands, date, rid, snap, res, drift, pay[rid], fin)
             for s in strategies:
                 if date < s['registered'] or snap not in s.get('snaps', ['C-2']):
                     continue
@@ -283,6 +302,7 @@ def main(argv=None):
     ap.add_argument('--data', required=True, help='データ用リポジトリの data フォルダ')
     ap.add_argument('--strategies', default=os.path.join(HERE, 'strategies.json'))
     ap.add_argument('--redo', action='store_true', help='台帳を作り直す')
+    ap.add_argument('--cands-only', action='store_true', help='台帳は変えず、記録済みの日の候補（cands.csv）だけ作り直す')
     ap.add_argument('--today', default=None, help='今日（JST、YYYYMMDD）。今日以降の分は、その日が終わるまで台帳に入れない')
     a = ap.parse_args(argv)
     data = Path(a.data)
@@ -295,6 +315,18 @@ def main(argv=None):
     ledger = [] if a.redo or not ledger_path.exists() else read_csv(ledger_path)
     days = {} if a.redo or not meta_path.exists() else json.loads(meta_path.read_text(encoding='utf-8'))
     calib_all = {} if a.redo or not calib_path.exists() else json.loads(calib_path.read_text(encoding='utf-8'))
+    if a.cands_only:
+        allc = []
+        for date in sorted(days):
+            c = []
+            evaluate_day(model, [], data, date, drift, dict(bands={}, ll=[]), c)
+            allc += c
+            print(f'{date}: 候補 {len(c)}')
+        with open(out_dir / 'cands.csv', 'w', newline='', encoding='utf-8') as f:
+            w = csv.DictWriter(f, fieldnames=CAND_FIELDS)
+            w.writeheader()
+            w.writerows(allc)
+        return
     from datetime import datetime as _dt, timedelta as _td, timezone as _tz
     today = a.today or _dt.now(_tz(_td(hours=9))).strftime('%Y%m%d')
     for p in sorted(glob.glob(str(data / '*' / 'odds_snap' / 'snap_*.csv'))):
@@ -303,7 +335,8 @@ def main(argv=None):
             continue
         n_snap = len({r['race_id'] for r in read_csv(p)})
         calib = dict(bands={}, ll=[])
-        rows, n_races = evaluate_day(model, strategies, data, date, drift, calib)
+        cands = []
+        rows, n_races = evaluate_day(model, strategies, data, date, drift, calib, cands)
         if n_races == 0:
             print(f'{date}: 結果がまだ無いため保留')
             continue
@@ -313,6 +346,13 @@ def main(argv=None):
         ledger.extend(rows)
         days[date] = n_races
         calib_all[date] = calib
+        cand_path = out_dir / 'cands.csv'
+        new = not cand_path.exists() or a.redo and date == min(days)
+        with open(cand_path, 'w' if new else 'a', newline='', encoding='utf-8') as f:
+            w = csv.DictWriter(f, fieldnames=CAND_FIELDS)
+            if new:
+                w.writeheader()
+            w.writerows(cands)
         print(f'{date}: 判定 {n_races}レース / 買い目 {len(rows)}点')
     with open(ledger_path, 'w', newline='', encoding='utf-8') as f:
         w = csv.DictWriter(f, fieldnames=LEDGER_FIELDS)

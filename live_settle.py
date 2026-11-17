@@ -19,9 +19,9 @@ from pathlib import Path
 import netkeirin_collector as N
 
 JST = timezone(timedelta(hours=9))
-CHECK_BETS_MIN = 3        # 記録を読み直す間隔
+CHECK_BETS_MIN = 2        # 記録を読み直す間隔
 FIRST_AFTER_MIN = 6       # 発走から何分後に結果を見に行くか
-RETRY_MIN = 2             # 払戻が出ていなければ、この間隔で取り直す
+RETRY_MIN = 1             # 払戻が出ていなければ、この間隔で取り直す
 SLOW_AFTER_MIN = 60       # 発走からこれ以上たったレースは、取り直しの間隔を広げる
 SLOW_RETRY_MIN = 10
 
@@ -68,6 +68,41 @@ class LiveSettler:
         except (OSError, ValueError):
             self.live = {}
         self.stats = dict(settled=0, checked=0)
+        # 今日の推奨（締切2分前の REC2）の成績: 推奨した組を「100円ずつ買った」として精算する
+        self.recs_path = self.repo / 'data' / 'bets' / 'recs_live.json'
+        try:
+            self.recs = json.loads(self.recs_path.read_text(encoding='utf-8'))
+        except (OSError, ValueError):
+            self.recs = {}
+
+    def add_recs(self, date, race_id, picks, now):
+        """推奨した組を記録（同じ組は1回だけ）。picks = [(券種, 組, 確率, 今のオッズ, 確定予想オッズ, 確定予想の期待値)]"""
+        day = self.recs.setdefault(date, {})
+        added = False
+        for bt, k, p, od, of, ev in picks:
+            rid = f'{race_id}_{bt}_{k}'
+            if rid in day:
+                continue
+            day[rid] = dict(id=rid, race_id=race_id, bt=bt, key=k, stake=100, p=p, odds=od, odds_final_pred=of, ev=ev,
+                            at=now.strftime('%H:%M:%S'))
+            added = True
+        if added:
+            self._save_recs()
+        return added
+
+    def _save_recs(self):
+        for d in sorted(self.recs)[:-3]:  # 直近3日だけ残す
+            del self.recs[d]
+        self.recs_path.parent.mkdir(parents=True, exist_ok=True)
+        self.recs_path.write_text(json.dumps(self.recs, ensure_ascii=False, indent=1, sort_keys=True), encoding='utf-8')
+
+    def today_summary(self, date):
+        recs = list((self.recs.get(date) or {}).values())
+        done = [r for r in recs if r.get('result')]
+        ret = sum(r.get('payout', 0) for r in done)
+        return dict(date=date, n=len(recs), settled=len(done), hits=sum(1 for r in done if r['result'] == 'hit'),
+                    stake=100 * len(done), ret=ret, exp_hits=round(sum(r['p'] for r in recs), 2),
+                    rows=[[r['race_id'], r['bt'], r['key'], r['odds'], r['ev'], r.get('result', ''), r.get('payout', 0)] for r in recs][-40:])
 
     def _git_read(self, rel_paths):
         """リモートの最新から読む（作業中のファイルは変えない）。{相対パス: 中身の文字列 or None}"""
@@ -107,6 +142,13 @@ class LiveSettler:
             if b.get('id') in self.settled or b.get('id') in self.live or b.get('date') not in self.known:
                 continue
             pending.setdefault(b.get('race_id'), []).append(b)
+        rec_pending = {}
+        for d in self.known:
+            for r in (self.recs.get(d) or {}).values():
+                if not r.get('result'):
+                    rec_pending.setdefault(r['race_id'], []).append(r)
+        for rid in rec_pending:
+            pending.setdefault(rid, [])
         changed = False
         for rid, bs in pending.items():
             if rid not in nk_of:
@@ -128,7 +170,16 @@ class LiveSettler:
             except Exception as e:  # noqa: BLE001  取れなければ次の機会に
                 print(f'  ! {nk} 結果の取得に失敗 {type(e).__name__}', flush=True)
                 continue
-            done = settle_bets_for_race(bs, res, now)
+            rs = rec_pending.get(rid, [])
+            if rs:
+                rd = settle_bets_for_race(rs, res, now)
+                for r in rs:
+                    if r['id'] in rd:
+                        r.update(result=rd[r['id']]['result'], payout=rd[r['id']]['payout'])
+                if rd:
+                    self._save_recs()
+                    changed = True
+            done = settle_bets_for_race(bs, res, now) if bs else {}
             if done:
                 self.live.update(done)
                 self.stats['settled'] += len(done)

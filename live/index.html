@@ -397,7 +397,9 @@ h2 { font-size: 15px; margin: 16px 0 6px; }
     }).join('');
     const R0 = st.index.report;
     const repLine = R0 && R0.last ? `<div class="mini toreport" style="cursor:pointer">📊 ${esc(String(R0.last).slice(4, 6))}/${esc(String(R0.last).slice(6))} の推奨 ${R0.n}点・的中 ${R0.hits}・回収率 ${R0.roi == null ? '-' : (R0.roi * 100).toFixed(0) + '%'}${R0.alerts ? ` <span class="pill warn">⚠ ${R0.alerts}件</span>` : ' <span class="pill good">異常なし</span>'}</div>` : '';
-    return `<div class="card hero" style="border:2px solid #2f5bea">${repLine}<h2>🎯 今の推奨（1点・${yen(stakeOf())}）<span class="muted" style="font-weight:normal">全場・締切の早い順・確定予想の期待値 ${(st.bank ? st.bank.set.evRec : DEF_SET.evRec).toFixed(2)} 以上・100倍以下・強い1番人気は含む組だけ</span></h2>
+    const T0 = st.index.today_recs;
+    const todayLine = T0 && T0.n && T0.date === st.index.date ? `<div class="mini" style="margin-top:4px">📈 <b>今日の推奨（REC2）</b> ${T0.n}点・精算 ${T0.settled}点・的中 ${T0.hits}（予想 ${T0.exp_hits}）・回収率 <b>${T0.stake ? (T0.ret / T0.stake * 100).toFixed(0) + '%' : '-'}</b>${T0.stake ? `（${T0.ret - T0.stake >= 0 ? '+' : ''}${yen(T0.ret - T0.stake)}）` : ''}</div>` : '';
+    return `<div class="card hero" style="border:2px solid #2f5bea">${repLine}${todayLine}<h2>🎯 今の推奨（1点・${yen(stakeOf())}）<span class="muted" style="font-weight:normal">全場・締切の早い順・確定予想の期待値 ${(st.bank ? st.bank.set.evRec : DEF_SET.evRec).toFixed(2)} 以上・100倍以下・強い1番人気は含む組だけ</span></h2>
       ${bankLine}${cards || '<div class="skip" style="margin-top:8px">⏸ 今は推奨がありません（見送り）。各レースの締切5分前から判定します（締切6分前からは30秒ごとに最新）。</div>'}</div>`;
   }
   function bindBoard() {
@@ -553,6 +555,20 @@ h2 { font-size: 15px; margin: 16px 0 6px; }
       <div class="card"><h2 style="margin-top:0">事前登録した買い方（締切2分前・1点100円）</h2>
         <div class="scroll"><table class="rep"><tr><th>買い方</th><th>点数</th><th>的中</th><th>回収率</th><th>90%区間</th><th>収支</th><th>直近7日</th></tr>${srows}</table></div>
         <p class="note">点数が数百になるまでは運で大きく上下します。90%区間の下限が100%を超えて初めて「勝てる」と言えます。</p></div>
+      ${(() => {
+        const V = R.variants || {};
+        const tbl = (rows) => !rows || !rows.length ? '<div class="muted">まだデータがありません</div>' : rows.filter((v) => v.n).map((v) => `
+          <div style="border-top:1px solid var(--line);padding:8px 0">
+            <div class="mini" style="margin:0"><b style="min-width:3.5em">${esc(v.id)}</b><span>${v.n}点</span><span>的中 ${v.exp_hits}→<b>${v.hits}</b></span>
+              <span>回収率 <b>${pc(v.roi)}</b></span><span class="evb ${tier(v.ev_final || 0)}">期待値 ${v.ev_final == null ? '-' : v.ev_final.toFixed(2)}</span></div>
+            <div class="muted" style="font-size:12px">${esc(v.label)}・平均 ${v.avg_odds}倍・回収率の90%区間 ${pc(v.lo)}〜${pc(v.hi)}</div></div>`).join('');
+        return `<div class="card"><h2 style="margin-top:0">提案のあり方の比較（探索・締切2分前のオッズ）</h2>
+          <p class="note" style="margin-top:0">同じレースで、いろいろな選び方をしていたらどうだったか（1点100円）。<b>回収率</b>は運で大きく上下するので、
+          <b>確定オッズでの期待値</b>（当たる確率 × 実際の確定オッズ。1.00超なら長く続けて勝てる見込み）と、的中の予想と実際を並べて見ます。
+          何十通りも比べると偶然よく見えるものが出るため、ここで良かった選び方は事前登録してから確かめます。</p>
+          <h2>${esc(String(R.last || '').slice(4, 6))}/${esc(String(R.last || '').slice(6))}</h2>${tbl(V.last)}
+          <h2>累計（${R.days}日）</h2>${tbl(V.all)}</div>`;
+      })()}
       <div class="card"><h2 style="margin-top:0">予想の確率の当たり方（累計）</h2>
         <div class="scroll"><table class="rep"><tr><th>券種・期待値の帯</th><th>組数</th><th>予想の的中</th><th>実際</th><th>z</th></tr>${cal || '<tr><td colspan="5" class="muted">まだデータがありません</td></tr>'}</table></div>
         <div class="muted">z が ±3 を超えたら、運ではなく予想のずれ（⚠ に出ます）。2車複の的中組の当たり方 オッズとの差: ${ll.diff == null ? '-' : (ll.diff > 0 ? '+' : '') + ll.diff}（z=${ll.z == null ? '-' : ll.z}、${ll.n || 0}R。マイナスほどオッズより良い）</div></div>
