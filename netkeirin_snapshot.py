@@ -30,6 +30,12 @@ KEEP_TYPES = {'3連単', '3連複', '2車単', '2車複', 'ワイド'}
 FIELDS = ['race_id', 'date', 'race_number', 'snap', 'snap_at', 'start_at', 'deadline_at', 'official_dt',
           'bet_type', 'combination', 'odds', 'odds_max', 'popularity', 'absent']
 LIST_REFRESH_MIN = 30
+# 期待値ボードの「最新」: 締切 LIVE_MIN 分前から締切まで、LIVE_SEC 秒ごとにオッズを取り直して表示だけ更新する
+# （記録のファイル・台帳には入れない）。サーバーの負担を考えて 30 秒より短くはしない
+LIVE_MIN = 6
+LIVE_SEC = 30
+LIVE_FLUSH_SEC = 15   # 締切直前のレースがある間は、期待値ボードをこの間隔で公開
+LOOP_SEC_LIVE = 5     # 同じく、見回りの間隔
 LATE_MIN = 2  # 締切直前以外の時点は、予定からこの分数以上遅れたら取らない
 
 
@@ -78,6 +84,16 @@ def due_jobs(races: list, date: str, offsets: list, done: set, now: datetime) ->
             if dl - timedelta(minutes=off) <= now < dl and late_ok:
                 jobs.append((dl - timedelta(minutes=off), nk, snap, st, dl))
     return [(nk, snap, st, dl) for _, nk, snap, st, dl in sorted(jobs)]
+
+
+def live_jobs(races: list, date: str, now: datetime) -> list:
+    """締切 LIVE_MIN 分前〜締切のレース [(nk, 発走, 締切)]"""
+    out = []
+    for nk, hhmm in races:
+        st, dl = N.start_dt(date, hhmm), N.deadline_dt(date, nk, hhmm)
+        if st is not None and dl is not None and dl - timedelta(minutes=LIVE_MIN) <= now < dl:
+            out.append((nk, st, dl))
+    return out
 
 
 def remaining(races: list, date: str, offsets: list, done: set, now: datetime) -> int:
@@ -211,7 +227,7 @@ def main(argv=None, clock=None, sleep=time.sleep):
             Path(a.blocked_flag).write_text('blocked', encoding='utf-8')
     finally:
         flush()
-        print(f'記録 {stats["snaps"]}件 / 失敗 {stats["failed"]}件')
+        print(f'記録 {stats["snaps"]}件 / 失敗 {stats["failed"]}件 / 最新の更新 {stats.get("live", 0)}回')
         if alerter is not None:
             print(alerter.summary())
 
@@ -246,6 +262,7 @@ def run_day(a, date, until, offsets, stats, alerter, site, flush, flushed_at, cl
             done = {(row['race_id'], row['snap']) for row in csv.DictReader(f)}
     races, listed_at = [], None
     site_flushed = [clock()]
+    live_at = {}  # nk → 最後にオッズを取った時刻（記録・最新の両方）
 
     def done_nk():
         return {(nk, s) for nk, _ in races for s in (f'C-{o}' for o in offsets) if (N.to_wt_race_id(nk), s) in done}
@@ -274,6 +291,7 @@ def run_day(a, date, until, offsets, stats, alerter, site, flush, flushed_at, cl
                 print(f'  ! {nk} {snap}: 失敗 {type(e).__name__}', flush=True)
                 rows = None
             done.add((N.to_wt_race_id(nk), snap))
+            live_at[nk] = clock()
             if rows:
                 KC.append_csv(path, rows, ['race_id', 'snap', 'bet_type', 'combination'])
                 stats['snaps'] += 1
@@ -293,15 +311,30 @@ def run_day(a, date, until, offsets, stats, alerter, site, flush, flushed_at, cl
                         raise
                     except Exception as e:  # noqa: BLE001
                         print(f'  ! 期待値ボードの計算に失敗 {type(e).__name__}')
+        live_now = live_jobs(races, date, clock())
+        if site is not None:
+            for nk, st, dl in live_now:
+                if (nk in live_at and clock() - live_at[nk] < timedelta(seconds=LIVE_SEC)) or clock() >= dl:
+                    continue
+                live_at[nk] = clock()
+                try:
+                    rows = snapshot_rows(fetch_snapshot(nk), nk, 'LIVE', clock(), st, dl)
+                    if rows:
+                        site.on_snapshot(nk, 'LIVE', st, rows, clock(), deadline=dl)
+                        stats['live'] = stats.get('live', 0) + 1
+                except N.Blocked:
+                    raise
+                except Exception as e:  # noqa: BLE001  最新の更新の失敗で記録を止めない
+                    print(f'  ! {nk} 最新の更新に失敗 {type(e).__name__}', flush=True)
         if races and remaining(races, date, offsets, done_nk(), clock()) == 0:
             print(f'{date} の記録すべきレースは終わりました', flush=True)
             return True
         if a.flush_min and clock() - flushed_at[0] >= timedelta(minutes=a.flush_min):
             flush()
-        if site is not None and clock() - site_flushed[0] >= timedelta(seconds=60):
+        if site is not None and clock() - site_flushed[0] >= timedelta(seconds=LIVE_FLUSH_SEC if live_now else 60):
             site.flush()
             site_flushed[0] = clock()
-        sleep(20)
+        sleep(LOOP_SEC_LIVE if live_now else 20)
     return False
 
 

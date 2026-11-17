@@ -113,6 +113,28 @@ def test_snapshot():
     S.SITE_FACTORY = None
     N.list_today = lambda date, venue=None: races
 
+    # 締切6分前からは30秒ごとに「最新」を取り直して期待値ボードだけ更新（記録のファイルには入れない）
+    live = []
+
+    class LiveSite(FakeSite):
+        def on_snapshot(self, nk, snap, st, rows, now, deadline=None):
+            if snap == 'LIVE':
+                live.append((now, nk))
+    S.SITE_FACTORY = lambda a, date, alerter: LiveSite(date)
+    N.list_today = lambda date, venue=None: races if date == DATE else []
+    t[0] = datetime(2099, 12, 31, 9, 0, tzinfo=N.JST)
+    out4 = Path(tempfile.mkdtemp())
+    S.main(['--out-dir', str(out4), '--date', DATE, '--until', '11:00', '--site'], clock=lambda: t[0], sleep=sleep)
+    r1 = [n for n, nk in live if nk.endswith('2301')]
+    gaps = [(b - a).total_seconds() for a, b in zip(r1, r1[1:])]
+    dl1 = datetime(2099, 12, 31, 9, 25, tzinfo=N.JST)
+    check(len(r1) >= 6 and min(gaps) >= 30 and all(dl1 - timedelta(minutes=6) <= x < dl1 for x in r1),
+          f'締切6分前〜締切に30秒以上の間隔で最新を更新（{len(r1)}回）')
+    rows4 = list(csv.DictReader(open(out4 / '2099' / 'odds_snap' / f'snap_{DATE}.csv', encoding='utf-8-sig')))
+    check('LIVE' not in {r['snap'] for r in rows4}, '最新の更新は記録のファイルに入れない')
+    S.SITE_FACTORY = None
+    N.list_today = lambda date, venue=None: races
+
     # サーバーから拒否されたら、次の実行のリレーを止める印を残す
     flag = Path(tempfile.mkdtemp()) / 'blocked'
 

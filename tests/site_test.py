@@ -80,6 +80,16 @@ def main():
     except Exception:  # noqa: BLE001
         check(True, '違うパスワードでは読めない')
 
+    # 締切直前の「最新」（LIVE）: 表示用に保存し、一覧の推奨もそれに更新。下落の学習は締切までの残りに近い時点を使う
+    drift = {'2車複': {'C-2': {'|': {'ratio': 0.5}}, 'C-10': {'|': {'ratio': 1.0}}}}
+    sbl = S.SiteBuilder(E.load_model(), PW, tempfile.mkdtemp(), '20991231', cards_fn=lambda nk: cards, drift=drift)
+    sbl.set_races([(NK, '15:00')])
+    rl = sbl.on_snapshot(NK, 'LIVE', start, odds, start - timedelta(minutes=7))  # 締切 14:55 の2分前
+    ent = sbl.index['races']['052320991231']
+    top = rl['snaps']['LIVE']['types']['2車複'][0]
+    check('LIVE' in ent['snaps'] and ent['recs']['snap'] == 'LIVE' and abs(top[5] - round(top[2] * 0.5, 1)) < 1e-9,
+          f'最新（LIVE）を保存し、締切2分前の下落の学習を使う {top[:6]}')
+
     # 毎朝の検証レポート: 全体は report.enc、一覧には要約
     rep = dict(generated='2099-12-31 07:55', last='20991230', yesterday=dict(sum=dict(n=5, hits=1, roi=1.4)), alerts=['x'])
     sbr = S.SiteBuilder(E.load_model(), PW, tempfile.mkdtemp(), '20991231', cards_fn=lambda nk: cards, report=rep)
