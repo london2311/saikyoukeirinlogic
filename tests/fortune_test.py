@@ -52,6 +52,9 @@ def test_parse_birth():
     assert RP.parse_birth(html) == '1983-01-02'
     assert RP.parse_birth('<th>生年月日</th><td>1990年7月15日</td>') == '1990-07-15'
     assert RP.parse_birth('<p>登録 2010/05/01</p>') is None
+    real = ('<div class="ProfileHeader_box_data">\n<span class="ProfileHeader_box_dataText">\n'
+            '<a href="https://keirin.netkeiba.com/db/search_result/player.html?pid=player_list&age=4">\n1985/05/06(41歳)\n</a>\n</span>')
+    assert RP.parse_birth(real) == '1985-05-06'
     assert RP.parse_birth('') is None
 
 
