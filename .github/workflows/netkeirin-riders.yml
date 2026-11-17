@@ -1,0 +1,69 @@
+# 選手の生年月日（占いの表示・検証用）を、過去に出走した選手の分までまとめて取得する（1回だけ・手動実行）。
+# 保存先は非公開のデータ用リポジトリ（data/riders/birthdays.json）だけ。ログには件数だけ出す（私的利用のみ）。
+# 終わったら台帳・検証レポートを作り直す（📊検証ページの「🔮 選手の運気と成績」）。
+name: netkeirin-riders
+
+on:
+  workflow_dispatch:
+    inputs:
+      max:
+        description: "取得する選手の上限"
+        required: false
+        default: "3000"
+
+permissions:
+  contents: read
+  actions: write
+
+concurrency:
+  group: netkeirin-riders
+  cancel-in-progress: false
+
+jobs:
+  riders:
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    steps:
+      - name: 設定の確認
+        id: cfg
+        env:
+          DATA_REPO: ${{ vars.DATA_REPO }}
+          HAS_TOKEN: ${{ secrets.DATA_REPO_TOKEN != '' }}
+        run: |
+          if [ -z "$DATA_REPO" ] || [ "$HAS_TOKEN" != "true" ]; then
+            echo "::warning::DATA_REPO / DATA_REPO_TOKEN が未設定のため何もしません"
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "ok=true" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: actions/checkout@v4
+        if: steps.cfg.outputs.ok == 'true'
+      - name: データ用リポジトリ（非公開）を取得
+        if: steps.cfg.outputs.ok == 'true'
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ vars.DATA_REPO }}
+          token: ${{ secrets.DATA_REPO_TOKEN }}
+          path: _data_repo
+      - uses: actions/setup-python@v5
+        if: steps.cfg.outputs.ok == 'true'
+        with:
+          python-version: "3.12"
+      - name: 生年月日を取得
+        if: steps.cfg.outputs.ok == 'true'
+        run: python rider_profile.py --data _data_repo/data --max "${{ inputs.max }}"
+      - name: データ用リポジトリにコミット
+        if: ${{ always() && steps.cfg.outputs.ok == 'true' }}
+        working-directory: _data_repo
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data/riders
+          if git diff --cached --quiet; then echo "変更なし"; exit 0; fi
+          git commit -q -m "data: 選手の生年月日"
+          for i in 1 2 3 4; do git pull -q --rebase && git push -q && break; sleep 5; done
+      - name: 台帳・検証レポートを作り直す
+        if: ${{ always() && steps.cfg.outputs.ok == 'true' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run netkeirin-ledger.yml -R "${{ github.repository }}" --ref "${{ github.ref_name }}"
