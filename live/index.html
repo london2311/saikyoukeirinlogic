@@ -732,6 +732,18 @@ h2 { font-size: 15px; margin: 16px 0 6px; }
         });
       }
     }
+    // 3連単の買い目群（検証中）: 1点のオッズではなく合成オッズ（100倍以下）と確定予想での合成の期待値（1.10〜2.0）で判断
+    const g3 = (s.groups || {})['3連単'];
+    if (g3) {
+      [...(g3.ev || []), ...(g3.hit || [])].forEach((r) => {
+        const [lab, n, P, syn, ev, evr, st2, cut, n2, P2, syn2, ev2, evr2, st3] = r;
+        const pick = (cut && ev2 >= 1.1) ? { keys: st3, syn: syn2, ev: ev2, P: P2, lab: lab + ' から ' + cut.map((k) => fmtKey('3連単', k)).join('・') + ' を切る', kind: '3連単 買い目群（✂切り・検証中）' }
+          : { keys: st2, syn, ev, P, lab, kind: '3連単 買い目群（検証中）' };
+        if (n < 2 || pick.ev < 1.1 || !pick.syn) return;
+        if (pick.syn > REC_ODDS_MAX || pick.ev > REC_EV_MAX || (fav && !pick.keys.every((x) => String(x[0]).split('-').includes(fav)))) { dropped++; return; }
+        recs.push({ kind: pick.kind, bt: '3連単', keys: pick.keys.map((x) => x[0]), od: pick.syn, ev: pick.ev, P: pick.P, lab: pick.lab, group: true, trial: true });
+      });
+    }
     const uniq = [];
     const sig = new Set();
     recs.sort((a, b) => b.ev - a.ev).forEach((r) => { const k = r.bt + r.keys.slice().sort().join(','); if (!sig.has(k)) { sig.add(k); uniq.push(r); } });
@@ -751,7 +763,7 @@ h2 { font-size: 15px; margin: 16px 0 6px; }
       ${early ? '<div class="note" style="margin-top:0">締切15・10分前のオッズは締切までに大きく動くため参考です。判定は締切5分前・2分前（最新）で。</div>' : ''}
       ${fav ? `<div class="mini"><span class="pill">強い1番人気 ${car(fav)}（1着 ${pct((s.win || {})[fav])}）→ ${fav}番を含む組だけ</span></div>` : ''}
       ${uniq.slice(0, 6).map((r) => { const t = tier(r.ev); return `<div class="rec ${t}">
-        <div>${tbadge(r.bt)} <span class="pill ${r.kind.startsWith('★') ? 'good' : ''}">${esc(r.kind)}</span>
+        <div>${tbadge(r.bt)} <span class="pill ${r.kind.startsWith('★') ? 'good' : r.trial ? 'warn' : ''}">${esc(r.kind)}</span>
           <div style="margin-top:6px" class="combos">${r.group ? r.keys.slice(0, 8).map((k) => combo(r.bt, k)).join('') + (r.keys.length > 8 ? ` <span class="muted">ほか${r.keys.length - 8}点</span>` : '') : combo(r.bt, r.keys[0], true)}</div></div>
         <div style="text-align:right">${r.group ? `${evb(r.ev)}<div class="buy">合成 ${x1(r.od)}倍</div><div class="muted" style="font-size:11px">確定予想での期待値</div>` : tierPill(r.ev)}</div>
         ${r.group ? '' : `<div class="line2">${evTwo(r.P, r.od, r.of, r.omax, r.ofmax)}</div>`}
