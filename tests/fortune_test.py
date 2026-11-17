@@ -101,11 +101,21 @@ def test_site_luck_and_study():
                 w.writerow(['R1', '2026111813', c, 0, f'{c:06d}', 100 - c])
         with open(p / 'results.csv', 'w', newline='', encoding='utf-8') as f:
             w = csv.writer(f)
-            w.writerow(['race_id', 'car_number', 'order'])
+            w.writerow(['race_id', 'car_number', 'order', 'accident'])
             for c in range(1, 8):
-                w.writerow(['R1', c, c])
+                w.writerow(['R1', c, c if c < 7 else 0, '' if c < 7 else '落車'])
+        with open(p / 'odds_202611.csv', 'w', newline='', encoding='utf-8') as f:
+            w = csv.writer(f)
+            w.writerow(['race_id', 'bet_type', 'combination', 'odds'])
+            w.writerow(['R1', '3連単', '1-2-3', 2.0])
+            w.writerow(['R1', '3連単', '2-1-3', 8.0])
+            w.writerow(['R1', '3連単', '7-1-2', 100.0])
+        mk = FS.market_win(Path(d))
+        assert abs(sum(mk['R1'].values()) - 1) < 1e-9 and mk['R1'][1] > 0.7
         r = FS.study(Path(d), {f'{c:06d}': {'birth': f'198{c}-03-0{c}'} for c in range(1, 8)})
-        assert r['starts'] == 7 and '運気点' in r['table']
+        assert r['starts'] == 7 and set(r['sections']) == {'win', 'top3', 'fav_lose', 'long_win', 'accident'}
+        assert '運気点' in r['sections']['win']['table']
+        assert sum(v[1] for v in r['sections']['fav_lose']['table']['運気点']) == 1  # 1着確率45%以上は1番車だけ
 
 
 if __name__ == '__main__':
