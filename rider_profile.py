@@ -153,3 +153,36 @@ def known_players(data_dir):
             seen.add(p)
             res.append(p)
     return res
+
+
+def main(argv=None):
+    """過去に出走した選手の生年月日をまとめて取得（1回だけの実行用）。ログには件数だけ出す"""
+    import argparse
+    from datetime import timedelta, timezone
+    import netkeirin_collector as N
+    ap = argparse.ArgumentParser()
+    ap.add_argument('--data', required=True, help='データ用リポジトリの data フォルダ')
+    ap.add_argument('--max', type=int, default=3000)
+    ap.add_argument('--interval', type=float, default=4.0, help='1リクエストごとの間隔（秒。記録ジョブと同時に動くので既定より長め）')
+    a = ap.parse_args(argv)
+    jst = timezone(timedelta(hours=9))
+    bd = Birthdays(a.data, fetch=lambda p: N.fetch(N.BASE_URL + PROFILE_URL, {'id': p}, interval=max(a.interval, N.REQUEST_INTERVAL)),
+                   per_day=a.max)
+    pids = bd.missing(known_players(a.data))
+    print(f'生年月日が未取得の選手 {len(pids)}人（上限 {a.max}人）', flush=True)
+    try:
+        while not bd.off:
+            n = bd.fetch_some(pids, 100, datetime.now(jst))
+            bd.save()
+            print(f'  {bd.summary()}', flush=True)
+            if n == 0:
+                break
+    except N.Blocked:
+        print('!! サーバーから拒否されたため中断しました（回避はしません）', flush=True)
+    finally:
+        bd.save()
+        print(bd.summary(), flush=True)
+
+
+if __name__ == '__main__':
+    main()
