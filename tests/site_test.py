@@ -82,7 +82,7 @@ def main():
 
     # 締切直前の「最新」（LIVE）: 表示用に保存し、一覧の推奨もそれに更新。下落の学習は締切までの残りに近い時点を使う
     drift = {'2車複': {'C-2': {'|': {'ratio': 0.5}}, 'C-10': {'|': {'ratio': 1.0}}}}
-    sbl = S.SiteBuilder(E.load_model(), PW, tempfile.mkdtemp(), '20991231', cards_fn=lambda nk: cards, drift=drift)
+    sbl = S.SiteBuilder(E.load_model(), PW, tempfile.mkdtemp(), '20991231', cards_fn=lambda nk: cards, drift=drift, strategies=strategies)
     sbl.set_races([(NK, '15:00')])
     rl = sbl.on_snapshot(NK, 'LIVE', start, odds, start - timedelta(minutes=7))  # 締切 14:55 の2分前
     ent = sbl.index['races']['052320991231']
@@ -95,6 +95,17 @@ def main():
           f'買い基準は今のオッズ（下落0.5倍なら 5.5→11.0倍） {S.buy_line(0.2, 1.10, drift, "2車複", "C-2")}')
     check(abs(top[4] - S.buy_line(top[1], 1.10, drift, '2車複', 'C-2')) < 1e-9 and top[2] * 0.5 * top[1] < 1.10 <= top[4] * 0.5 * top[1] + 0.02,
           f'表の買い基準も同じ（今 {top[2]}倍 < 基準 {top[4]}倍 なので推奨にならない）')
+
+    # 事前登録の該当（今のオッズで判定）でも、確定予想の期待値が1.10未満なら一覧の「おすすめあり」に数えない
+    strat_hits = rl['snaps']['LIVE']['strat']
+    check(strat_hits and ent['best']['strat'] == 0, f'下落を見込むと届かない事前登録の該当は、おすすめに数えない（該当 {len(strat_hits)}・数えた {ent["best"]["strat"]}）')
+    import reasons as RS
+    odds_w2 = odds + [dict(race_id='', bet_type='ワイド', combination=f'{a}-{b}', odds=2.0, odds_max=3.0, absent=0)
+                      for a in range(1, 8) for b in range(a + 1, 8)]
+    res_w = E.analyze(E.load_model(), cards, odds_w2, '取手', {})
+    w = RS.build(cards, res_w, ev_min=0.0)['tickets']
+    wk = next(k for k in w if k.startswith('ワイド|'))
+    check(any('ワイドのオッズが示す確率は 14.3%' in x for x in w[wk]), f'ワイドのオッズが示す確率は合計3で計算（21組すべて2倍 → 3÷21=14.3%） {w[wk][:2]}')
 
     # 毎朝の検証レポート: 全体は report.enc、一覧には要約
     rep = dict(generated='2099-12-31 07:55', last='20991230', yesterday=dict(sum=dict(n=5, hits=1, roi=1.4)), alerts=['x'])

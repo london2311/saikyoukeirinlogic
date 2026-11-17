@@ -626,9 +626,12 @@ h2 { font-size: 15px; margin: 16px 0 6px; }
     const seen = new Set();
     const rowOf = (bt, k) => { const x = (s.types[bt] || []).find((r) => r[0] === k); return x ? R(x) : null; };
     (s.strat || []).forEach(([id, lab, bt, k, od, ev, line]) => {
+      // 事前登録の買い方は「今のオッズでの期待値」で該当を判定している（検証の条件は変えない）。
+      // おすすめに出すのは、確定予想（締切後の下落を見込む）でも期待値1.10以上のものだけ
+      const r = rowOf(bt, k);
+      if (!r || r.ev < 1.1) return;
       seen.add(bt + k);
-      const r = rowOf(bt, k);  // 表示は確定予想オッズでの期待値（判定は事前登録どおり今のオッズ）
-      recs.push({ kind: '★ 事前登録', bt, keys: [k], od, of: r ? r.of : od, ev: r ? r.ev : ev, line, P: r ? r.p : null, lab });
+      recs.push({ kind: '★ 事前登録', bt, keys: [k], od, of: r.of, ev: r.ev, line: r.line, P: r.p, lab, omax: r.omax, evmax: r.evmax });
     });
     for (const bt of VALIDATED) {
       (s.types[bt] || []).map(R).filter(({ k, p, od, ev }) => ev >= 1.1 && p >= 0.005 && od <= 300 && !seen.has(bt + k)).slice(0, 3)
