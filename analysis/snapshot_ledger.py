@@ -206,6 +206,7 @@ def main(argv=None):
     ap.add_argument('--data', required=True, help='データ用リポジトリの data フォルダ')
     ap.add_argument('--strategies', default=os.path.join(HERE, 'strategies.json'))
     ap.add_argument('--redo', action='store_true', help='台帳を作り直す')
+    ap.add_argument('--today', default=None, help='今日（JST、YYYYMMDD）。今日以降の分は、その日が終わるまで台帳に入れない')
     a = ap.parse_args(argv)
     data = Path(a.data)
     strategies = json.load(open(a.strategies, encoding='utf-8'))['strategies']
@@ -217,14 +218,20 @@ def main(argv=None):
     ledger = [] if a.redo or not ledger_path.exists() else read_csv(ledger_path)
     days = {} if a.redo or not meta_path.exists() else json.loads(meta_path.read_text(encoding='utf-8'))
     calib_all = {} if a.redo or not calib_path.exists() else json.loads(calib_path.read_text(encoding='utf-8'))
+    from datetime import datetime as _dt, timedelta as _td, timezone as _tz
+    today = a.today or _dt.now(_tz(_td(hours=9))).strftime('%Y%m%d')
     for p in sorted(glob.glob(str(data / '*' / 'odds_snap' / 'snap_*.csv'))):
         date = Path(p).stem.split('_')[1]
         if date in days:
             continue
+        n_snap = len({r['race_id'] for r in read_csv(p)})
         calib = dict(bands={}, ll=[])
         rows, n_races = evaluate_day(model, strategies, data, date, drift, calib)
         if n_races == 0:
             print(f'{date}: 結果がまだ無いため保留')
+            continue
+        if date >= today and n_races < n_snap:  # 途中で結果を集めた日は、全レースの結果がそろうか日が変わるまで入れない（一度入れた日は数え直さないため）
+            print(f'{date}: 結果がそろっていないため保留（{n_races} / {n_snap}レース）')
             continue
         ledger.extend(rows)
         days[date] = n_races

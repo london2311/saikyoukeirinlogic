@@ -64,6 +64,10 @@ def main():
     live = json.loads((repo / 'data' / 'bets' / 'settled_live.json').read_text(encoding='utf-8'))
     check(live['d']['result'] == 'miss' and live['d']['odds_final'] is None, f'外れ {live["d"]}')
     check(set(s.known) == {D1, D2}, '前日のレース一覧も覚えている（最終レースの精算用）')
+    # 記録ジョブが止まっていた間に終わったレース（発走から何時間もたった）も精算する
+    s2 = LS.LiveSettler(Path(tempfile.mkdtemp()), fetch_result=fetch_result, read_remote=read_remote)
+    fetched.clear()
+    check(s2.tick(races1, D1, t + timedelta(hours=5)) and fetched == [nk1], '発走から5時間たったレースも精算する')
     print('\n全テスト成功')
 
 
