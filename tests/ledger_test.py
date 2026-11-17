@@ -69,6 +69,31 @@ def main():
     L.main(['--data', str(data), '--strategies', str(strat)])
     led2 = list(csv.DictReader(open(data / 'ledger' / 'ledger.csv', encoding='utf-8')))
     check(len(led2) == len(led), '同じ日を二重に数えない')
+
+    # ボードの推奨（EV_d: 下落の学習で補正・複数券種・1レース最大6点）と、確率の当たり方の記録（締切2分前）
+    data2 = Path(tempfile.mkdtemp())
+    y2 = data2 / '2099'
+    write(y2 / 'odds_snap' / f'snap_{DATE}.csv', [dict(r, snap='C-2') for r in snap if r['snap'] == 'T-4'])
+    write(y2 / 'racecards.csv', [dict(r, race_id=RID) for r in cards])
+    write(y2 / 'races.csv', [dict(race_id=RID, date=DATE, venue_name='取手', cancel=0)])
+    write(y2 / 'payoffs.csv', [dict(race_id=RID, bet_type='2車複', combination='1-2', payoff=900, popularity=1)])
+    (data2 / 'ledger').mkdir()
+    (data2 / 'ledger' / 'drift.json').write_text(json.dumps({'table': {'2車複': {'C-2': {'|': {'ratio': 0.5}}}}}), encoding='utf-8')
+    strat2 = Path(tempfile.mkdtemp()) / 's.json'
+    strat2.write_text(json.dumps({'strategies': [
+        dict(id='R', label='推奨', bet_type='2車複', bet_types=['2車複', 'ワイド'], signal='EV_d', min=1.10, per_race=6,
+             registered='20990101', snaps=['C-2']),
+        dict(id='Q', label='2車複', bet_type='2車複', signal='EV_f', min=1.10, registered='20990101', snaps=['C-2'])]},
+        ensure_ascii=False), encoding='utf-8')
+    L.main(['--data', str(data2), '--strategies', str(strat2)])
+    led3 = list(csv.DictReader(open(data2 / 'ledger' / 'ledger.csv', encoding='utf-8')))
+    q = [r for r in led3 if r['strategy'] == 'Q']
+    rr = [r for r in led3 if r['strategy'] == 'R']
+    check(q and all(float(r['prob']) * round(float(r['odds']) * 0.5, 1) >= 1.10 for r in rr) and len(rr) < len(q),
+          f'推奨は締切後の下落（確定予想オッズ）で判定する（{len(rr)}点 < 下落なし {len(q)}点）')
+    cal = json.loads((data2 / 'ledger' / 'calib.json').read_text(encoding='utf-8'))[DATE]
+    check(sum(v[0] for k, v in cal['bands'].items() if k.startswith('2車複')) == 21 and len(cal['ll']) == 1,
+          '締切2分前の確率の当たり方（2車複 21組・的中組の対数損失）を記録')
     print('\n全テスト成功')
 
 

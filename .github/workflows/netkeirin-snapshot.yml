@@ -7,24 +7,28 @@
 # 重要: netkeirin 利用規約により、データは私的利用の範囲内でのみ利用できる。
 #   * このリポジトリ（公開）には何もコミットしない。ログには件数・成功/失敗だけを出す。
 #   * DATA_REPO / DATA_REPO_TOKEN が未設定なら何もせず終了する。
-# 1日を3つの時間帯に分けて実行する（1ジョブの上限6時間のため）。前の時間帯が終わるまで次は待機する。
+# 実行はリレー方式: 1回の実行は約5時間半（ジョブの上限6時間の手前）で終わり、終わる直前に次の実行を自分で予約する。
+# GitHub の定時実行は数時間遅れたり、実行されないことがあるため、定時実行はリレーが途切れた時の再開用。
+# その日のレースが終わったら、同じ実行のまま翌日の予定に切り替えて、翌日の分を続けて記録する。
+# 止めたい時: リポジトリの Variables に SNAPSHOT_RELAY=off（定時実行は動く）。サーバーから拒否された時もリレーは止まる。
 name: netkeirin-snapshot
 
 on:
   schedule:
-    - cron: "13 23 * * *"   # 08:13 JST 〜 13:30
-    - cron: "7 4 * * *"     # 13:07 JST 〜 18:50
-    - cron: "41 9 * * *"    # 18:41 JST 〜 24:20（最後のレースが終わったら、期待値ボードを翌日の予定に切り替える）
-    - cron: "3 15 * * *"    # 00:03 JST 〜 01:00 念のため: 今日の全レースの予定を期待値ボードに出す（前の時間帯が切り替え済みなら何もしない）
+    - cron: "13 23 * * *"   # 08:13 JST（リレーが途切れていた時の再開用。以下同じ）
+    - cron: "7 4 * * *"     # 13:07 JST
+    - cron: "41 9 * * *"    # 18:41 JST
+    - cron: "3 15 * * *"    # 00:03 JST
   workflow_dispatch:
     inputs:
-      until:
-        description: "終了時刻 JST（例 18:50、翌日は 24:20）"
+      hours:
+        description: "この実行で記録する時間（最大5.5）"
         required: false
-        default: "24:20"
+        default: "5.5"
 
 permissions:
   contents: write  # 期待値ボードの暗号化データを site-data ブランチに置くため（データ本体は非公開リポジトリのみ）
+  actions: write   # 次の実行を予約する（リレー）
 
 concurrency:
   group: netkeirin-snapshot
@@ -40,22 +44,15 @@ jobs:
         env:
           DATA_REPO: ${{ vars.DATA_REPO }}
           HAS_TOKEN: ${{ secrets.DATA_REPO_TOKEN != '' }}
-          SCHEDULE: ${{ github.event.schedule }}
-          UNTIL_INPUT: ${{ inputs.until }}
+          HOURS_INPUT: ${{ inputs.hours }}
         run: |
           if [ -z "$DATA_REPO" ] || [ "$HAS_TOKEN" != "true" ]; then
             echo "::warning::DATA_REPO / DATA_REPO_TOKEN が未設定のため、何もせず終了します。"
             echo "ok=false" >> "$GITHUB_OUTPUT"; exit 0
           fi
-          case "$SCHEDULE" in
-            "13 23 * * *") UNTIL="13:30" ;;
-            "7 4 * * *")   UNTIL="18:50" ;;
-            "41 9 * * *")  UNTIL="24:20" ;;
-            "3 15 * * *")  UNTIL="01:00" ;;
-            *)             UNTIL="${UNTIL_INPUT:-24:20}" ;;
-          esac
+          HOURS="${HOURS_INPUT:-5.5}"
+          echo "hours=$HOURS" >> "$GITHUB_OUTPUT"
           # 前の時間帯の終了を待って始まった場合でも、日付は JST の今日
-          echo "until=$UNTIL" >> "$GITHUB_OUTPUT"
           echo "date=$(TZ=Asia/Tokyo date +%Y%m%d)" >> "$GITHUB_OUTPUT"
           echo "ok=true" >> "$GITHUB_OUTPUT"
 
@@ -75,10 +72,10 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: 記録と通知（保存先は _data_repo/data のみ。1時間ごとにコミット）
+      - name: 記録（保存先は _data_repo/data のみ。1時間ごとにコミット）
         if: steps.cfg.outputs.ok == 'true'
         env:
-          UNTIL: ${{ steps.cfg.outputs.until }}
+          HOURS: ${{ steps.cfg.outputs.hours }}
           DAY: ${{ steps.cfg.outputs.date }}
           # 通知メール（任意）: Settings → Secrets and variables → Actions に登録。未設定なら判定だけ行う
           ALERT_GMAIL_USER: ${{ secrets.ALERT_GMAIL_USER }}
@@ -86,6 +83,10 @@ jobs:
           ALERT_TO: ${{ secrets.ALERT_TO }}
           # 期待値ボード（任意）: 12文字以上のパスワード。未設定なら作らない
           SITE_PASSWORD: ${{ secrets.SITE_PASSWORD }}
+          # その日のレースが終わったら、結果の収集（→ 台帳・検証レポート）を予約する
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          REF: ${{ github.ref_name }}
         run: |
           pip install --quiet numpy pandas scipy cryptography
           cat > /tmp/flush.sh <<'SH'
@@ -93,11 +94,23 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add data
-          git diff --cached --quiet && exit 0
+          if git diff --cached --quiet; then git pull -q --rebase || true; exit 0; fi  # 変更が無くても最新（毎朝の検証レポート等）を取り込む
           git commit -q -m "data: 発走前オッズ $(TZ=Asia/Tokyo date +%Y-%m-%d\ %H:%M)"
           for i in 1 2 3 4; do git pull -q --rebase && git push -q && exit 0; sleep $((i * 5)); done
           echo "::warning::コミットの push に失敗（次回の flush で再試行）"
           SH
-          python netkeirin_snapshot.py --out-dir _data_repo/data --date "$DAY" --until "$UNTIL" \
+          python netkeirin_snapshot.py --out-dir _data_repo/data --date "$DAY" --hours "$HOURS" --blocked-flag /tmp/blocked \
             --offsets 15,10,5,2 --alert --alert-snaps C-5,C-2 --site --drift _data_repo/data/ledger/drift.json \
-            --flush-cmd "bash /tmp/flush.sh" --flush-min 60
+            --report _data_repo/data/ledger/daily_report.json \
+            --flush-cmd "bash /tmp/flush.sh" --flush-min 60 \
+            --on-day-done "gh workflow run netkeirin-collect.yml -R $REPO --ref $REF -f date={date} -f wait_min=45"
+
+      - name: 次の実行を予約（リレー）
+        # 手動でキャンセルした時・SNAPSHOT_RELAY=off の時・サーバーから拒否された時は予約しない
+        if: ${{ !cancelled() && steps.cfg.outputs.ok == 'true' && vars.SNAPSHOT_RELAY != 'off' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ -f /tmp/blocked ]; then echo "::warning::サーバーから拒否されたため、リレーを止めます"; exit 0; fi
+          gh workflow run netkeirin-snapshot.yml -R "${{ github.repository }}" --ref "${{ github.ref_name }}"
+          echo "次の実行を予約しました"

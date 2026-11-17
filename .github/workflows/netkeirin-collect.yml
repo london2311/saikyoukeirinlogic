@@ -9,7 +9,7 @@ name: netkeirin-collect
 
 on:
   schedule:
-    - cron: "17 21 * * *"   # 毎日 06:17 JST（前日分）
+    - cron: "17 21 * * *"   # 毎日 06:17 JST（前日分）。通常は、その日の最後のレースの記録が終わった時に記録ジョブが予約する
   workflow_dispatch:
     inputs:
       date:
@@ -24,9 +24,14 @@ on:
         description: "期間指定の終了日 YYYYMMDD（空欄なら前日）"
         required: false
         default: ""
+      wait_min:
+        description: "始める前に待つ分（最後のレースの払戻が確定するまで）"
+        required: false
+        default: "0"
 
 permissions:
   contents: read   # 公開リポジトリには書き込まない
+  actions: write   # 収集が終わったら台帳・検証レポートの実行を予約する
 
 concurrency:
   group: netkeirin-data
@@ -49,6 +54,10 @@ jobs:
           else
             echo "ok=true" >> "$GITHUB_OUTPUT"
           fi
+
+      - name: 払戻の確定を待つ
+        if: steps.cfg.outputs.ok == 'true' && inputs.wait_min != '' && inputs.wait_min != '0'
+        run: sleep $(( ${{ inputs.wait_min }} * 60 ))
 
       - uses: actions/checkout@v4
         if: steps.cfg.outputs.ok == 'true'
@@ -94,3 +103,9 @@ jobs:
           echo "変更ファイル数: $(git diff --cached --name-only | wc -l)"
           git commit -q -m "data: netkeirin 収集 $(date -u -d '+9 hours' +%Y-%m-%d)"
           for i in 1 2 3; do git pull -q --rebase && git push -q && break; sleep 5; done
+
+      - name: 台帳・検証レポートの実行を予約
+        if: ${{ !cancelled() && steps.cfg.outputs.ok == 'true' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run netkeirin-ledger.yml -R "${{ github.repository }}" --ref "${{ github.ref_name }}"
