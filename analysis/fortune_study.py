@@ -122,10 +122,8 @@ def starts_of(data: Path, birth, mkt):
 def study(data: Path, birthdays=None, mkt=None, split='20260701'):
     data = Path(data)
     if birthdays is None:
-        try:
-            birthdays = json.loads((data / 'riders' / 'birthdays.json').read_text(encoding='utf-8'))
-        except (OSError, ValueError):
-            birthdays = {}
+        import rider_profile
+        birthdays = rider_profile.load(data)
     birth = {k: F.parse_date(v.get('birth')) for k, v in birthdays.items() if v.get('birth')}
     birth = {k: v for k, v in birth.items() if v}
     if not birth:

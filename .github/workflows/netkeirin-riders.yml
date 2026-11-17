@@ -1,5 +1,5 @@
 # 選手の生年月日（占いの表示・検証用）を、過去に出走した選手の分までまとめて取得する（1回だけ・手動実行）。
-# 保存先は非公開のデータ用リポジトリ（data/riders/birthdays.json）だけ。ログには件数だけ出す（私的利用のみ）。
+# 保存先は非公開のデータ用リポジトリ（data/riders/birthdays.csv）だけ。ログには件数だけ出す（私的利用のみ）。
 # 終わったら台帳・検証レポートを作り直す（📊検証ページの「🔮 選手の運気と成績」）。
 name: netkeirin-riders
 
@@ -61,7 +61,14 @@ jobs:
           git add data/riders
           if git diff --cached --quiet; then echo "変更なし"; exit 0; fi
           git commit -q -m "data: 選手の生年月日"
-          for i in 1 2 3 4; do git pull -q --rebase && git push -q && break; sleep 5; done
+          # birthdays.csv は .gitattributes の merge=union で、記録ジョブが同時に書いても両方の行が残る
+          ok=0
+          for i in 1 2 3 4 5; do
+            if git pull -q --rebase && git push -q; then ok=1; break; fi
+            git rebase --abort 2>/dev/null || true
+            sleep 10
+          done
+          if [ "$ok" != 1 ]; then echo "::error::データ用リポジトリへの push に失敗しました"; exit 1; fi
       - name: 台帳・検証レポートを作り直す
         if: ${{ always() && steps.cfg.outputs.ok == 'true' }}
         env:
