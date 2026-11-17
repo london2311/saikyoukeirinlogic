@@ -101,6 +101,7 @@ h2 { font-size: 15px; margin: 16px 0 6px; }
 .betbtn { border: none; border-radius: 10px; padding: 8px 16px; font-size: 15px; font-weight: 800; color: #fff; cursor: pointer;
   background: linear-gradient(120deg, #12a150, #0e8a4f); box-shadow: 0 2px 6px rgba(18,161,80,.35); }
 .betbtn:disabled { opacity: .6; }
+.addbet { border: 1px solid var(--good); color: var(--good); background: transparent; border-radius: 8px; padding: 3px 8px; font-size: 12px; font-weight: 700; white-space: nowrap; cursor: pointer; }
 .legend { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; font-size: 12px; color: var(--sub); }
 </style>
 </head>
@@ -184,6 +185,8 @@ h2 { font-size: 15px; margin: 16px 0 6px; }
 
   // ================================================================ 資金管理（賭けた記録は非公開の datebase に保存）
   const DATA_REPO = 'datebase';
+  const INP = 'display:block;width:100%;margin-top:4px;padding:8px;font-size:16px;border:1px solid var(--line);border-radius:8px;background:var(--card);color:var(--ink)';
+  const VENUES = { 11: '函館', 12: '青森', 13: 'いわき平', 21: '弥彦', 22: '前橋', 23: '取手', 24: '宇都宮', 25: '大宮', 26: '西武園', 27: '京王閣', 28: '立川', 31: '松戸', 32: '千葉', 34: '川崎', 35: '平塚', 36: '小田原', 37: '伊東', 38: '静岡', 42: '名古屋', 43: '岐阜', 44: '大垣', 45: '豊橋', 46: '富山', 47: '松阪', 48: '四日市', 51: '福井', 53: '奈良', 54: '向日町', 55: '和歌山', 56: '岸和田', 61: '玉野', 62: '広島', 63: '防府', 71: '高松', 73: '小松島', 74: '高知', 75: '松山', 81: '小倉', 83: '久留米', 84: '武雄', 85: '佐世保', 86: '別府', 87: '熊本' };
   const DEF_SET = { initial: 30000, stake: 100, evRec: 1.10, dayLoss: 3000, raceMax: 500 };
   const todayJST = () => new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Tokyo' }));
   const ymd = (d) => `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}`;
@@ -275,17 +278,18 @@ h2 { font-size: 15px; margin: 16px 0 6px; }
     if (!st.tok) { st.page = 'bank'; render(); return; }
     if (!st.bank) await loadBank();
     const S = stats(st.bank), set = st.bank.set;
+    const now = todayJST();
+    const rdate = /^\d{8}$/.test(String(rec.race).slice(4, 12)) ? String(rec.race).slice(4, 12) : ymd(now);  // レースの日（過去のレースも）
     const warn = [];
-    if (S.tPL <= -set.dayLoss) warn.push(`今日の損失が上限（${yen(set.dayLoss)}）に達しています`);
+    if (rdate === ymd(now) && S.tPL <= -set.dayLoss) warn.push(`今日の損失が上限（${yen(set.dayLoss)}）に達しています`);
     const raceSum = st.bank.bets.filter((x) => !x.deleted && x.race_id === rec.race).reduce((a, x) => a + x.stake, 0);
     if (raceSum + stake > set.raceMax) warn.push(`このレースの合計が上限（${yen(set.raceMax)}）を超えます`);
     if (stake > S.bal) warn.push('残高が足りません');
     if (warn.length && !confirm(warn.join('\n') + '\n\nそれでも記録しますか？')) return;
-    const now = todayJST();
-    const bet = { id: `${rec.race}_${rec.bt}_${rec.key}_${Date.now()}`, placed_at: `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}T${now.toTimeString().slice(0, 8)}`, date: ymd(now),
+    const bet = { id: `${rec.race}_${rec.bt}_${rec.key}_${Date.now()}`, placed_at: `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}T${now.toTimeString().slice(0, 8)}`, date: rdate,
       race_id: rec.race, venue: rec.venue, rn: rec.rn, deadline: rec.deadline, bt: rec.bt, key: rec.key, stake,
-      odds: rec.od, odds_final: rec.of, ev: rec.ev, p: rec.p, snap: rec.snap };
-    await mutateMonth(ymd(now).slice(0, 6), (arr) => [...arr, bet]);
+      odds: rec.od ?? null, odds_final: rec.of ?? null, ev: rec.ev ?? null, p: rec.p ?? null, snap: rec.snap || '', source: rec.source || 'board' };
+    await mutateMonth(rdate.slice(0, 6), (arr) => [...arr, bet]);
     st.bank.bets.push(bet);
     render();
   }
@@ -377,7 +381,7 @@ h2 { font-size: 15px; margin: 16px 0 6px; }
     const kpi = (lab, v, cls = '') => `<div class="card" style="margin:0;padding:10px"><div class="muted">${lab}</div><div style="font-size:20px;font-weight:800" class="${cls}">${v}</div></div>`;
     const rows = [...S.live].reverse().slice(0, 200).map((x) => { const r = b.settled[x.id];
       const res = !r ? '<span class="pill">結果待ち</span>' : r.result === 'hit' ? `<span class="pill good">的中 +${yen(r.payout)}</span>` : r.result === 'void' ? '<span class="pill">返還</span>' : '<span class="pill off">外れ</span>';
-      return `<tr><td>${esc(x.date.slice(4, 6))}/${esc(x.date.slice(6))} ${esc(x.venue)}${x.rn}R<div>${tbadge(x.bt)} ${combo(x.bt, x.key)}</div></td><td>${yen(x.stake)}</td><td>${x1(x.odds)}倍<div class="muted">EV ${Number(x.ev).toFixed(2)}</div></td><td>${res}${!r ? ` <button class="more" data-cancel="${esc(x.id)}">取消</button>` : ''}</td></tr>`; }).join('');
+      return `<tr><td>${esc(x.date.slice(4, 6))}/${esc(x.date.slice(6))} ${esc(x.venue)}${x.rn}R<div>${tbadge(x.bt)} ${combo(x.bt, x.key)}</div></td><td>${yen(x.stake)}</td><td>${r && r.odds_final ? `確定 <b>${x1(r.odds_final)}</b>倍` : (x.odds != null ? x1(x.odds) + '倍' : '-')}<div class="muted">${x.odds != null ? '記録時 ' + x1(x.odds) + '倍' : '手入力'}${x.ev != null ? '・EV ' + Number(x.ev).toFixed(2) : ''}</div></td><td>${res}${!r ? ` <button class="more" data-cancel="${esc(x.id)}">取消</button>` : ''}</td></tr>`; }).join('');
     const warn = S.tPL <= -set.dayLoss ? `<div class="card" style="border:2px solid var(--bad);color:var(--bad);font-weight:700">⚠ 今日の損失が上限（${yen(set.dayLoss)}）に達しました。今日はここまでにしましょう。</div>` : '';
     app.innerHTML = head + `<main>${warn}
       <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:8px;margin-top:10px">
@@ -393,8 +397,36 @@ h2 { font-size: 15px; margin: 16px 0 6px; }
         <button id="saveset" class="betbtn" style="width:100%">設定を保存</button>
         <p class="note">記録は ${esc(OWNER)}/${DATA_REPO} の data/bets/ に保存され、毎朝の収集のあと自動で精算されます（的中・外れ・返還）。</p>
         <button class="more" id="forget">この端末のトークンを消す</button></div>
+      <div class="card"><h2 style="margin-top:0">＋ 買い目を追加（過去のレースも）</h2>
+        <div class="muted">ボードに載っていないレースや、記録し忘れた分。結果と確定オッズは、その日の結果の収集のあとに自動で精算されます。</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:8px">
+          <label>日付<input id="m_date" type="date" value="${ymd(todayJST()).replace(/^(\d{4})(\d{2})(\d{2})$/, '$1-$2-$3')}" style="${INP}"></label>
+          <label>場<select id="m_venue" style="${INP}">${Object.entries(VENUES).map(([c, n]) => `<option value="${c}">${esc(n)}</option>`).join('')}</select></label>
+          <label>レース<select id="m_rn" style="${INP}">${Array.from({ length: 12 }, (_, i) => `<option value="${i + 1}">${i + 1}R</option>`).join('')}</select></label>
+          <label>券種<select id="m_bt" style="${INP}">${['2車複', '2車単', 'ワイド', '3連複', '3連単'].map((t) => `<option>${t}</option>`).join('')}</select></label>
+          <label>組（例 1-2 / 1-2-3）<input id="m_key" inputmode="numeric" placeholder="1-2" style="${INP}"></label>
+          <label>金額（円）<input id="m_stake" type="number" min="100" step="100" value="${set.stake}" style="${INP}"></label>
+        </div>
+        <button id="m_add" class="betbtn" style="width:100%;margin-top:10px">追加する</button><div class="err" id="m_err"></div></div>
       <div class="card"><h2 style="margin-top:0">履歴</h2><div class="scroll"><table><tr><th>レース・買い目</th><th>金額</th><th>オッズ</th><th>結果</th></tr>${rows || '<tr><td colspan="4" class="muted">まだ記録がありません</td></tr>'}</table></div></div></main>`;
     bindBack(); bindBoard();
+    document.getElementById('m_add').onclick = async () => {
+      const err = document.getElementById('m_err');
+      const dt = document.getElementById('m_date').value.replace(/-/g, '');
+      const vc = document.getElementById('m_venue').value, rn = +document.getElementById('m_rn').value, bt = document.getElementById('m_bt').value;
+      const n = bt.startsWith('3') ? 3 : 2;
+      let parts = document.getElementById('m_key').value.trim().split(/[^0-9]+/).filter(Boolean);
+      if (parts.length === 1 && parts[0].length === n) parts = parts[0].split('');
+      const cars = parts.map(Number);
+      if (!/^\d{8}$/.test(dt) || dt > ymd(todayJST())) { err.textContent = '日付を確かめてください（今日まで）'; return; }
+      if (cars.length !== n || cars.some((c) => !(c >= 1 && c <= 9)) || new Set(cars).size !== n) { err.textContent = `${bt} は ${n} つの違う車番で入力してください（例 ${n === 3 ? '1-2-3' : '1-2'}）`; return; }
+      const key = (['2車複', 'ワイド', '3連複'].includes(bt) ? [...cars].sort((a, b) => a - b) : cars).join('-');
+      const stake = Math.round((parseInt(document.getElementById('m_stake').value, 10) || 0) / 100) * 100;
+      if (stake < 100) { err.textContent = '金額は100円以上'; return; }
+      const race = `${String(rn).padStart(2, '0')}${vc}${dt}`;
+      err.textContent = '記録中…';
+      try { await placeBet({ race, venue: VENUES[vc], rn, bt, key, source: 'manual' }, stake); } catch (e) { err.textContent = e.message; }
+    };
     document.getElementById('saveset').onclick = async () => {
       const next = { ...set };
       app.querySelectorAll('[data-set]').forEach((i) => { next[i.dataset.set] = parseFloat(i.value); });
@@ -580,6 +612,7 @@ h2 { font-size: 15px; margin: 16px 0 6px; }
       <p class="note">EV＝当たる確率×確定予想オッズ（締切後の下落を過去の記録から見込んだ倍率。「今→確定予想」で表示。学習前は今のオッズ）。ワイドは最低倍率。「買い基準」＝EVが1.10になる倍率。表示は「表示する期待値」以上・確率0.5%以上・300倍以下（「全○組を表示」で全部）。</p></main>`;
     bindBack();
     app.querySelectorAll('.seg button[data-s]').forEach((b) => b.onclick = () => { st.snap = b.dataset.s; st.snapPicked = b.dataset.s !== 'LIVE'; render(); });
+    bindAddBet();
     bindEv();
     app.querySelectorAll('#view button').forEach((b) => b.onclick = () => { st.view = b.dataset.v; store.set('kb_view', st.view); render(); });
     app.querySelectorAll('.more').forEach((b) => b.onclick = () => { st.showAll[b.dataset.t] = !st.showAll[b.dataset.t]; render(); });
@@ -645,17 +678,37 @@ h2 { font-size: 15px; margin: 16px 0 6px; }
     return `<details style="margin-top:6px"><summary style="cursor:pointer;color:var(--accent);font-weight:700">📝 選手メモ（得点・脚質・コメント・並び・関係）</summary>
       ${ks.map((c) => `<div style="display:flex;gap:8px;align-items:flex-start;margin-top:6px;font-size:13px">${car(c)}<span style="flex:1">${rs[c].map(esc).join(' ／ ')}</span></div>`).join('')}</details>`;
   }
+  // レース画面の各組の［賭けた］（締切後・過去のレースも記録できる）
+  function betCell(bt, k, x) {
+    const d = st.raceData || {};
+    const done = betOf(st.race, bt, k);
+    if (done) return `<span title="${esc(yen(done.stake))}">✅</span>`;
+    const rec = { race: st.race, venue: d.venue, rn: d.rn, deadline: d.deadline, bt, key: k, od: x.od, of: x.of, ev: x.ev, p: x.p, snap: st.snap, source: 'race' };
+    return `<button class="addbet" data-rec="${esc(JSON.stringify(rec))}">賭けた</button>`;
+  }
+  function bindAddBet() {
+    app.querySelectorAll('.addbet').forEach((b) => b.onclick = async (e) => {
+      e.stopPropagation();
+      const rec = JSON.parse(b.dataset.rec);
+      const v = prompt(`${rec.venue}${rec.rn}R ${rec.bt} ${rec.key} に賭けた金額（円）`, String(stakeOf()));
+      if (v == null) return;
+      const stake = Math.round((parseInt(v, 10) || 0) / 100) * 100;
+      if (stake < 100) { alert('100円以上で入力してください'); return; }
+      b.disabled = true; b.textContent = '記録中…';
+      try { await placeBet(rec, stake); } catch (err) { alert(err.message); b.disabled = false; b.textContent = '賭けた'; }
+    });
+  }
   function typeTable(bt, rows) {
     if (!rows.length) return `<div class="card"><div class="th2" style="margin:0">${tbadge(bt)} <span class="muted" style="font-weight:normal">この時点のオッズがありません</span></div></div>`;
     const all = !!st.showAll[bt];
     const shown = (all ? rows : rows.filter((x) => x[1] >= 0.005 && x[2] <= 300 && R(x).ev >= st.evMin).slice(0, 15)).map(R);
     const tag = VALIDATED.has(bt) ? '<span class="pill good">検証済み</span>' : '<span class="pill warn">参考</span>';
     return `<div class="card" style="border-top:4px solid ${TCOL[bt]}"><div class="th2">${tbadge(bt)} ${tag}<span class="muted" style="font-weight:normal">期待値の高い順</span></div>
-      <div class="scroll"><table><tr><th>組</th><th>確率</th><th>${bt === 'ワイド' ? '最低〜最高' : '今→確定予想'}</th><th>買い基準</th><th>EV</th></tr>
+      <div class="scroll"><table><tr><th>組</th><th>確率</th><th>${bt === 'ワイド' ? '最低〜最高' : '今→確定予想'}</th><th>買い基準</th><th>EV</th><th></th></tr>
       ${shown.length ? '' : `<tr><td colspan="5" class="muted">期待値${st.evMin}以上の組はありません</td></tr>`}
       ${shown.map(({ k, p, od, ev, line, of, omax, ofmax, evmax }) => `<tr class="${VALIDATED.has(bt) && ev >= 1.1 && p >= 0.005 && od <= 300 ? 'buy' + (ev >= 1.3 ? ' s' : '') : ''}">
         <td>${combo(bt, k)}</td><td>${pct(p)}</td><td>${omax ? `<b>${x1(od)}〜${x1(omax)}</b>倍${Math.abs(of - od) >= 0.05 ? `<div class="muted">→${x1(of)}〜${x1(ofmax)}</div>` : ''}` : oddsCell(od, of)}</td><td>${x1(line)}倍</td>
-        <td>${evRange(ev, evmax) || evb(ev).replace(/◎強く推奨 |○推奨 |△注目 /, '')}</td></tr>`).join('')}</table></div>
+        <td>${evRange(ev, evmax) || evb(ev).replace(/◎強く推奨 |○推奨 |△注目 /, '')}</td><td>${betCell(bt, k, { od, of, ev, p })}</td></tr>`).join('')}</table></div>
       <button class="more" data-t="${esc(bt)}">${all ? '上位だけ表示' : `全${rows.length}組を表示`}</button></div>`;
   }
   function groupSection(groups) {

@@ -44,7 +44,7 @@ def main():
     (d / 'bets').mkdir()
     json.dump(bets, open(d / 'bets' / 'bets_209912.json', 'w'))
     st, n = SB.settle(d)
-    check(st['a'] == dict(result='hit', payout=560, payoff=560.0, settled_at=st['a']['settled_at']), f'的中（組の順番は問わない） {st["a"]}')
+    check({k: st['a'][k] for k in ('result', 'payout', 'payoff')} == dict(result='hit', payout=560, payoff=560.0), f'的中（組の順番は問わない） {st["a"]}')
     check(st['b']['result'] == 'hit' and st['b']['payout'] == 960, 'ワイドの的中・賭け金に比例した払戻')
     check(st['c']['result'] == 'miss' and st['c']['payout'] == 0, '外れ')
     check(st['d']['result'] == 'void' and st['d']['payout'] == 100, 'レース中止は返還')
@@ -52,6 +52,20 @@ def main():
     check('f' not in st and n == 5, '結果がまだ無いレースは保留')
     st2, n2 = SB.settle(d)
     check(n2 == 0 and len(st2) == 5, '精算済みは繰り返さない')
+    # 過去のレースを後から記録した分も精算し、確定オッズ（外れでも）を付ける
+    rid = '0723' + '20991231'
+    write(y / 'races.csv', [dict(race_id='R1', cancel=0), dict(race_id='R2', cancel=1), dict(race_id='R3', cancel=0), dict(race_id=rid, cancel=0)])
+    write(y / 'payoffs.csv', [dict(race_id='R1', bet_type='2車複', combination='2-1', payoff=560),
+                              dict(race_id='R1', bet_type='ワイド', combination='1-2', payoff=210),
+                              dict(race_id='R1', bet_type='ワイド', combination='1-5', payoff=480),
+                              dict(race_id=rid, bet_type='2車単', combination='3-1', payoff=2350)])
+    write(y / 'odds' / 'odds_20991231.csv', [dict(race_id=rid, bet_type='2車単', combination='1-3', odds=18.7, absent=0),
+                                              dict(race_id=rid, bet_type='2車単', combination='3-1', odds=24.1, absent=0)])
+    json.dump(bets + [dict(id='g', race_id=rid, bt='2車単', key='1-3', stake=100), dict(id='h', race_id=rid, bt='2車単', key='3-1', stake=300)],
+              open(d / 'bets' / 'bets_209912.json', 'w'))
+    st3, _ = SB.settle(d)
+    check(st3['g']['result'] == 'miss' and st3['g']['odds_final'] == 18.7, f'外れでも確定オッズを付ける {st3["g"]}')
+    check(st3['h']['result'] == 'hit' and st3['h']['payout'] == 7050 and st3['h']['odds_final'] == 23.5, f'的中は払戻の倍率 {st3["h"]}')
     print('\n全テスト成功')
 
 
