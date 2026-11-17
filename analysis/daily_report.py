@@ -89,6 +89,7 @@ def ll_check(calib, dates):
 VARIANTS = [
     ('REC', '推奨（確定予想EV1.10以上・300倍以下）', dict(ev_d=1.1, omax=300)),
     ('REC2', '推奨v2（＋100倍以下・EV2.0以下・強い1番人気は軸）', dict(ev_d=1.1, omax=100, ev_d_max=2.0, fav=True)),
+    ('REC3', '推奨v3（確定予想EV1.00以上・100倍以下・EV2.0以下・強い1番人気は軸）', dict(ev_d=1.0, omax=100, ev_d_max=2.0, fav=True)),
     ('D100', '確定予想EV1.0以上・100倍以下', dict(ev_d=1.0, omax=100)),
     ('D105', '確定予想EV1.05以上・100倍以下', dict(ev_d=1.05, omax=100)),
     ('D120', '確定予想EV1.2以上・100倍以下', dict(ev_d=1.2, omax=100)),

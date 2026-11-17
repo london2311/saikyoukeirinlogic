@@ -27,6 +27,7 @@ import keirin_collector as KC
 
 ITER = 200_000
 SITE_SNAPS = ('C-15', 'C-10', 'C-5', 'C-2')  # 締切の15・10・5・2分前
+REC_EV_MIN = 1.00  # 推奨の基準: 確定予想の期待値（1.0を超える見込みがあれば推奨）
 LIVE = 'LIVE'  # 締切直前の数分は30秒ごとに更新（記録・台帳には使わず、期待値ボードの表示だけ）
 
 
@@ -106,8 +107,8 @@ class SiteBuilder:
         self.dirty = False
         self.set_report(report)
 
-    def rec_picks(self, wt, ev_min=1.10, odds_max=100.0, ev_max=2.0, fav_min=0.45):
-        """そのレースの今の推奨（REC2 と同じ条件）: [(券種, 組, 確率, 今のオッズ, 確定予想オッズ, 確定予想の期待値)]"""
+    def rec_picks(self, wt, ev_min=REC_EV_MIN, odds_max=100.0, ev_max=2.0, fav_min=0.45):
+        """そのレースの今の推奨（REC3 と同じ条件）: [(券種, 組, 確率, 今のオッズ, 確定予想オッズ, 確定予想の期待値)]"""
         ent = self.index['races'].get(wt) or {}
         fav = str(ent['fav'][0]) if ent.get('fav') and ent['fav'][1] >= fav_min else None
         out = []
@@ -204,7 +205,7 @@ class SiteBuilder:
         for t in res.get('tickets', []):
             # 締切後の下落を見込んだ「確定時の予想オッズ」と、それで計算した期待値（下落の学習データが無ければ今のオッズと同じ）
             of = round(t['odds'] * drift_ratio(self.drift, t['type'], dsnap, t['odds'], t['ev']), 1)
-            row = [t['key'], round(t['prob'], 5), t['odds'], round(t['ev'], 3), buy_line(t['prob'], 1.10, self.drift, t['type'], dsnap), of, round(t['prob'] * of, 3)]
+            row = [t['key'], round(t['prob'], 5), t['odds'], round(t['ev'], 3), buy_line(t['prob'], REC_EV_MIN, self.drift, t['type'], dsnap), of, round(t['prob'] * of, 3)]
             if t['type'] == 'ワイド' and wmax.get(t['key'], 0) > t['odds']:
                 hi = wmax[t['key']]
                 hf = round(hi * drift_ratio(self.drift, t['type'], dsnap, hi, t['prob'] * hi), 1)
