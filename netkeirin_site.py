@@ -80,7 +80,10 @@ class SiteBuilder:
         self.key = derive_key(password, base64.b64decode(meta['salt']))
         self.index = self._load('index.enc') or dict(date=date, races={})
         self.dirty = False
-        # 毎朝の検証レポート（analysis/daily_report.py）。一覧には要約だけ、全体は report.enc
+        self.set_report(report)
+
+    def set_report(self, report):
+        """毎朝の検証レポート（analysis/daily_report.py）。一覧には要約だけ、全体は report.enc"""
         if report:
             self._save('report.enc', report)
             y = (report.get('yesterday') or {}).get('sum') or {}

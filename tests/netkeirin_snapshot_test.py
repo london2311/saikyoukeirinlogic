@@ -85,15 +85,45 @@ def test_snapshot():
     nxt = [('210001012301', '08:30')]
     N.list_today = lambda date, venue=None: races if date == DATE else nxt
     t[0] = datetime(2099, 12, 31, 9, 0, tzinfo=N.JST)
-    S.main(['--out-dir', str(Path(tempfile.mkdtemp())), '--date', DATE, '--until', '11:00', '--site'], clock=lambda: t[0], sleep=sleep)
+    done_file = Path(tempfile.mkdtemp()) / 'done.txt'
+    S.main(['--out-dir', str(Path(tempfile.mkdtemp())), '--date', DATE, '--until', '11:00', '--site',
+            '--on-day-done', f'echo {{date}} >> {done_file}'], clock=lambda: t[0], sleep=sleep)
     check([b.date for b in built] == [DATE, '21000101'] and built[1].races == nxt and built[1].forced,
           f'レースが終わったら翌日の予定を期待値ボードに出す {[b.date for b in built]}')
+    import time as _time
+    for _ in range(50):
+        if done_file.exists():
+            break
+        _time.sleep(0.1)
+    check(done_file.exists() and done_file.read_text().split() == [DATE], 'レースが終わったら結果の収集を予約（{date} を置き換え）')
     built.clear()
     t[0] = datetime(2099, 12, 31, 9, 0, tzinfo=N.JST)
     S.main(['--out-dir', str(Path(tempfile.mkdtemp())), '--date', DATE, '--until', '9:20', '--site'], clock=lambda: t[0], sleep=sleep)
     check([b.date for b in built] == [DATE], '時間帯の途中で終わる時は切り替えない')
+    # リレー（--hours）: その日のレースが終わったら、同じ実行のまま翌日の分も記録する
+    built.clear()
+    calls.clear()
+    t[0] = datetime(2099, 12, 31, 9, 0, tzinfo=N.JST)
+    out3 = Path(tempfile.mkdtemp())
+    S.main(['--out-dir', str(out3), '--date', DATE, '--hours', '24', '--site'], clock=lambda: t[0], sleep=sleep)
+    nxt_rows = list(csv.DictReader(open(out3 / '2100' / 'odds_snap' / 'snap_21000101.csv', encoding='utf-8-sig')))
+    check({r['snap'] for r in nxt_rows} == {'C-15', 'C-10', 'C-5', 'C-2'} and [b.date for b in built][:2] == [DATE, '21000101'],
+          f'--hours: 今日が終わったら翌日の予定に切り替えて、翌日のレースも記録 {[b.date for b in built]}')
+    check(t[0] <= datetime(2100, 1, 1, 9, 0, tzinfo=N.JST) + timedelta(minutes=5), '翌日も、レースが終わったら（終了時刻を待たずに）次へ進む')
     S.SITE_FACTORY = None
     N.list_today = lambda date, venue=None: races
+
+    # サーバーから拒否されたら、次の実行のリレーを止める印を残す
+    flag = Path(tempfile.mkdtemp()) / 'blocked'
+
+    def blocked(*a, **k):
+        raise N.Blocked('403')
+    N.fetch = blocked
+    t[0] = datetime(2099, 12, 31, 9, 0, tzinfo=N.JST)
+    S.main(['--out-dir', str(Path(tempfile.mkdtemp())), '--date', DATE, '--hours', '2', '--blocked-flag', str(flag)],
+           clock=lambda: t[0], sleep=sleep)
+    check(flag.exists(), '拒否されたらリレーを止める印を残す')
+    N.fetch = fake_fetch
 
     # 途中から再開しても、記録済みのものは取り直さない
     calls.clear()
