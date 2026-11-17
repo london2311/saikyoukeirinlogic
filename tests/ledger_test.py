@@ -98,6 +98,23 @@ def main():
     cal = json.loads((data2 / 'ledger' / 'calib.json').read_text(encoding='utf-8'))[DATE]
     check(sum(v[0] for k, v in cal['bands'].items() if k.startswith('2車複')) == 21 and len(cal['ll']) == 1,
           '締切2分前の確率の当たり方（2車複 21組・的中組の対数損失）を記録')
+    # 3連単の買い目群（kind: group）: 1レース1群、各点を合成オッズの配分の賭け金で記録し、実際の払戻を付ける
+    data3 = Path(tempfile.mkdtemp())
+    y3 = data3 / '2099'
+    write(y3 / 'odds_snap' / f'snap_{DATE}.csv', [dict(r, snap='C-2') for r in snap if r['snap'] == 'T-4'])
+    write(y3 / 'racecards.csv', [dict(r, race_id=RID) for r in cards])
+    write(y3 / 'races.csv', [dict(race_id=RID, date=DATE, venue_name='取手', cancel=0)])
+    write(y3 / 'payoffs.csv', [dict(race_id=RID, bet_type='3連単', combination='1-2-3', payoff=1500, popularity=1)])
+    strat3 = Path(tempfile.mkdtemp()) / 's.json'
+    strat3.write_text(json.dumps({'strategies': [dict(id='G3', kind='group', label='3連単群', bet_type='3連単', signal='EV_d', min=0.0,
+                                                      p_min=0.10, odds_max=1000, registered='20990101', snaps=['C-2'])]}, ensure_ascii=False), encoding='utf-8')
+    L.main(['--data', str(data3), '--strategies', str(strat3), '--today', '21000101'])
+    led4 = list(csv.DictReader(open(data3 / 'ledger' / 'ledger.csv', encoding='utf-8')))
+    stakes = [int(float(r['stake'])) for r in led4]
+    check(len(led4) >= 2 and all(r['strategy'] == 'G3' and r['bet_type'] == '3連単' for r in led4) and all(x % 100 == 0 and x >= 100 for x in stakes),
+          f'3連単の買い目群を1群（{len(led4)}点）、100円単位の配分で記録 {stakes}')
+    check(all(float(r['payoff']) == (1500 if r['key'] == '1-2-3' else 0) for r in led4), '群の各点に実際の払戻')
+
     # REC2 の条件: 100倍以下・判定値2.0以下・強い1番人気（1着45%以上）はその選手を含む組だけ
     s2 = dict(id='R2', bet_type='2車複', bet_types=['2車複', 'ワイド'], signal='EV_f', min=1.1, max_val=2.0, odds_max=100.0001, fav_min=0.45)
     tk = [dict(type='2車複', key='1-2', prob=0.2, prob_market=0.18, odds=6.0, ev=1.2),      # 1番人気を含む → 残る

@@ -124,6 +124,64 @@ def select(strategy, tickets, res=None):
     return out
 
 
+def lines_of(cards):
+    lines = {}
+    for r in cards:
+        if str(r.get('absent', 0)) in ('1', 'True', 'true'):
+            continue
+        single = str(r.get('is_single', '')) in ('1', '1.0', 'True', 'true')
+        lid = f's{r["car_number"]}' if single or not r.get('line_order') else str(r.get('line_order'))
+        try:
+            pos = int(float(r.get('line_position') or 1))
+        except ValueError:
+            pos = 1
+        lines.setdefault(lid, []).append((pos, int(r['car_number'])))
+    return [[c for _, c in sorted(v)] for v in lines.values()]
+
+
+def pick_group(s, res, cards):
+    """買い目群（kind: group）の買い方: 期待値ボードと同じ買い目群（流し・フォーメーション・BOX・組み合わせ、✂切り後も）から、
+    的中率 p_min 以上・合成オッズ odds_max 以下・確定予想での期待値 min〜max_val・強い1番人気（fav_min）はその選手を含む組だけ、
+    の中で期待値が最も高い1つ。戻り値 (群, [(組, 賭け金, 今のオッズ, 確率)])。無ければ None"""
+    import formations as F
+    bt = s['bet_type']
+    drift, snap = res.get('_drift') or {}, res.get('_snap', 'C-2')
+    probs, odds, now = {}, {}, {}
+    for t in res['tickets']:
+        probs.setdefault(t['type'], {})[t['key']] = t['prob']
+        odds.setdefault(t['type'], {})[t['key']] = round(t['odds'] * DR.ratio(drift, t['type'], snap, t['odds'], t['ev']), 1)
+        now[(t['type'], t['key'])] = t['odds']
+    if '3連単' not in probs or bt not in probs:
+        return None
+    dist3 = {tuple(int(x) for x in k.split('-')): p for k, p in probs['3連単'].items()}
+    gs = F.build_groups(probs, odds, lines_of(cards), dist3)
+    gs = gs + F.combine(gs, probs, odds, dist3)
+    fav = None
+    if s.get('fav_min') and res.get('riders'):
+        top = max(res['riders'], key=lambda r: r.get('win', 0))
+        if top.get('win', 0) >= s['fav_min']:
+            fav = str(top['num'])
+    p_min = s.get('p_min', 0.10)
+    best = None
+    for g in gs:
+        if g['type'] != bt or g['p'] < p_min:
+            continue
+        pr = F.prune(g, probs, odds, p_min, dist3)
+        for c in [g] + ([pr] if pr else []):
+            if g['n'] < 2 or c['n'] < 2 or not c.get('odds') or c['odds'] > s.get('odds_max', 1e9):
+                continue
+            if not (s.get('min', 1.10) <= c['ev'] <= s.get('max_val', 1e9)):
+                continue
+            if fav and any(fav not in k.split('-') for k in c['keys']):
+                continue
+            if best is None or c['ev'] > best['ev']:
+                best = c
+    if best is None:
+        return None
+    _, st = F.realized_ev(best, probs, odds)
+    return best, [(k, stake, now[(bt, k)], probs[bt].get(k, 0.0)) for k, stake in zip(best['keys'], st)]
+
+
 def add_calib(calib, res, pay):
     """締切2分前の確率の当たり方（2車複・ワイドの全組を期待値の帯ごとに）と、2車複の的中組に付けた確率（融合 vs 市場）"""
     for t in res['tickets']:
@@ -159,6 +217,15 @@ def evaluate_day(model, strategies, data: Path, date: str, drift=None, calib=Non
                 add_calib(calib, res, pay[rid])
             for s in strategies:
                 if date < s['registered'] or snap not in s.get('snaps', ['C-2']):
+                    continue
+                if s.get('kind') == 'group':  # 買い目群: 群の各点を、合成オッズの配分の賭け金で記録
+                    pk = pick_group(s, res, cards[rid])
+                    if pk:
+                        g, pts = pk
+                        for k, stake, od, pr in pts:
+                            rows.append(dict(date=date, race_id=rid, venue=venue.get(rid, ''), snap=snap, strategy=s['id'],
+                                             bet_type=g['type'], key=k, prob=round(pr, 5), prob_market='', odds=od, ev=round(g['ev'], 4),
+                                             stake=stake, payoff=pay[rid].get((g['type'], k), 0.0), model=model['json'].get('version', '')))
                     continue
                 for t in select(s, res['tickets'], res):
                     rows.append(dict(date=date, race_id=rid, venue=venue.get(rid, ''), snap=snap, strategy=s['id'],
