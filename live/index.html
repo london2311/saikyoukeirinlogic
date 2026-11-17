@@ -574,6 +574,15 @@ h2 { font-size: 15px; margin: 16px 0 6px; }
       <div class="card"><h2 style="margin-top:0">予想の確率の当たり方（累計）</h2>
         <div class="scroll"><table class="rep"><tr><th>券種・期待値の帯</th><th>組数</th><th>予想の的中</th><th>実際</th><th>z</th></tr>${cal || '<tr><td colspan="5" class="muted">まだデータがありません</td></tr>'}</table></div>
         <div class="muted">z が ±3 を超えたら、運ではなく予想のずれ（⚠ に出ます）。2車複の的中組の当たり方 オッズとの差: ${ll.diff == null ? '-' : (ll.diff > 0 ? '+' : '') + ll.diff}（z=${ll.z == null ? '-' : ll.z}、${ll.n || 0}R。マイナスほどオッズより良い）</div></div>
+      ${(() => {
+        const L = R.luck;
+        if (!L || !L.table) return '<div class="card"><h2 style="margin-top:0">🔮 選手の運気と成績</h2><div class="muted">選手の生年月日を集めている途中です（記録ジョブの空き時間に少しずつ）。</div></div>';
+        const cats = ['運気点', '大殺界の年', '天中殺の日', '六星・年', '六星・月', '六星・日', '六星・今週', '四柱・今日の通変星'];
+        return `<div class="card"><h2 style="margin-top:0">🔮 選手の運気と成績（検証中・期待値には未使用）</h2>
+          <div class="muted">選手 ${L.riders}人・出走 ${L.starts.toLocaleString()}回。${esc(L.note || '')}</div>
+          ${cats.filter((c) => L.table[c]).map((c) => `<h2>${esc(c)}</h2><div class="scroll"><table class="rep"><tr><th>区分</th><th>出走</th><th>1着率</th><th>期待</th><th>z</th><th>3着内</th><th>期待</th></tr>
+            ${L.table[c].map(([v, n, w, ew, z, t3, e3]) => `<tr><td>${esc(v)}</td><td>${n.toLocaleString()}</td><td><b>${pc(w)}</b></td><td class="muted">${pc(ew)}</td><td class="${Math.abs(z) >= 3 ? 'bad' : ''}">${z >= 0 ? '+' : ''}${z.toFixed(1)}</td><td>${pc(t3)}</td><td class="muted">${pc(e3)}</td></tr>`).join('')}</table></div>`).join('')}</div>`;
+      })()}
     </main>`;
     bindBack();
   }
@@ -697,7 +706,8 @@ h2 { font-size: 15px; margin: 16px 0 6px; }
     const have = SNAPS.filter((s) => d.snaps[s]);
     if (!st.snap || !d.snaps[st.snap] || !st.snapPicked) st.snap = have[have.length - 1];  // 自分で選んでいなければ常に一番新しい時点
     const s = d.snaps[st.snap];
-    const riders = (d.riders || []).map(([c, n, p, pt, sty]) => `<span>${car(c)} ${esc(n)} <span style="opacity:.8">${esc(p)}・${esc(pt)}・${esc(sty)}</span></span>`).join('');
+    const lk = d.luck || {};
+    const riders = (d.riders || []).map(([c, n, p, pt, sty]) => `<span>${car(c)} ${esc(n)} <span style="opacity:.8">${esc(p)}・${esc(pt)}・${esc(sty)}</span>${lk[c] ? `<span title="${esc(lk[c][1])}">${luckMark(lk[c][2])}</span>` : ''}</span>`).join('');
     const wins = Object.entries(s.win || {}).sort((a, b) => b[1] - a[1]);
     const win = `<div class="winbar">${wins.map(([c, p]) => `<span title="${c}番 ${pct(p)}" style="width:${p * 100}%;background:${(CAR[c] || ['#999'])[0]};${c == 1 ? 'box-shadow:inset 0 0 0 1px #bbb' : ''}"></span>`).join('')}</div>
       <div class="mini">${wins.slice(0, 4).map(([c, p]) => `${car(c)} <b>${pct(p)}</b>`).join(' ')}<span class="muted">← 1着の確率</span></div>`;
@@ -708,7 +718,7 @@ h2 { font-size: 15px; margin: 16px 0 6px; }
       <div class="riders">${riders}</div>
       <div class="seg">${SNAPS.map((x) => `<button data-s="${x}" ${d.snaps[x] ? '' : 'disabled'} class="${x === st.snap ? 'on' : ''}">${SNAP_LABEL[x]}</button>`).join('')}</div>
       <div class="muted">取得 ${esc(s.at)} ／ ${s.market_ok ? 'オッズと融合済み' : '<span style="color:var(--bad);font-weight:700">3連単オッズ不足（参考値）</span>'}</div>
-      ${win}${riderMemo(s)}
+      ${win}${riderMemo(s)}${luckMemo(d)}
       <div class="seg" id="view"><button data-v="single" class="${view === 'single' ? 'on' : ''}">1点ごと</button>
       <button data-v="group" class="${view === 'group' ? 'on' : ''}">買い目群（合成オッズ）</button></div>${evControl()}</div>${strat}${tables}
       <p class="note">期待値＝当たる確率×オッズ。「今のオッズ」の期待値は参考、<b>判定は「確定予想」（締切後の下落を過去の記録から見込んだ倍率）の期待値</b>。ワイドは最低倍率。「買い基準」＝<b>今のオッズ</b>がこの倍率以上なら、確定予想（締切後の下落を見込んだ倍率）での期待値が1.00以上。表示は「表示する期待値」以上・確率0.5%以上・300倍以下（「全○組を表示」で全部）。</p></main>`;
@@ -796,7 +806,8 @@ h2 { font-size: 15px; margin: 16px 0 6px; }
     const w = s.why || {};
     const tk = r.group ? [] : ((w.tickets || {})[r.bt + '|' + r.keys[0]] || []);
     const cars = [...new Set(r.keys.flatMap((k) => k.split('-')))].slice(0, 4);
-    const rn = cars.map((c) => [c, (w.riders || {})[c] || []]).filter(([, v]) => v.length);
+    const lk = (st.raceData || {}).luck || {};
+    const rn = cars.map((c) => [c, ((w.riders || {})[c] || []).concat(lk[c] ? [`🔮${luckMark(lk[c][2])} ${lk[c][0]}`] : [])]).filter(([, v]) => v.length);
     if (!tk.length && !rn.length) return '';
     return `<details class="line2" style="grid-column:1/-1"><summary style="cursor:pointer;color:var(--accent);font-weight:700">💡 なぜこの買い目？</summary>
       ${tk.length ? `<ul style="margin:6px 0 4px;padding-left:18px">${tk.map((x) => `<li>${esc(x)}</li>`).join('')}</ul>` : ''}
@@ -808,6 +819,16 @@ h2 { font-size: 15px; margin: 16px 0 6px; }
     if (!ks.length) return '';
     return `<details style="margin-top:6px"><summary style="cursor:pointer;color:var(--accent);font-weight:700">📝 選手メモ（得点・脚質・コメント・並び・関係）</summary>
       ${ks.map((c) => `<div style="display:flex;gap:8px;align-items:flex-start;margin-top:6px;font-size:13px">${car(c)}<span style="flex:1">${rs[c].map(esc).join(' ／ ')}</span></div>`).join('')}</details>`;
+  }
+  // 選手の運気（六星占術・四柱推命）: 生年月日からの計算。期待値には入れていない（最後の判断の参考・データは検証中）
+  function luckMark(sc) { return sc >= 3 ? '🌟' : sc >= 1 ? '🙂' : sc <= -3 ? '💀' : sc <= -1 ? '🌧' : '·'; }
+  function luckMemo(d) {
+    const lk = d.luck || {};
+    const ks = Object.keys(lk).sort((a, b) => a - b);
+    if (!ks.length) return '';
+    return `<details style="margin-top:6px"><summary style="cursor:pointer;color:var(--accent);font-weight:700">🔮 選手の運気（六星占術・四柱推命／参考・期待値には未使用）</summary>
+      <div class="muted" style="font-size:12px;margin-top:4px">🌟好調 🙂良い · ふつう 🌧やや悪い 💀悪い（年・月・日の運気の合計）。◎好調 ○良い −ふつう △小殺界 ▲中殺界 ✕大殺界。暦の区切りは立春・節入りの近似。</div>
+      ${ks.map((c) => `<div style="display:flex;gap:8px;align-items:flex-start;margin-top:6px;font-size:13px">${car(c)}<span style="flex:1">${luckMark(lk[c][2])} ${esc(lk[c][1])}</span></div>`).join('')}</details>`;
   }
   // レース画面の各組の［賭けた］（締切後・過去のレースも記録できる）
   function betCell(bt, k, x) {

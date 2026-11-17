@@ -222,9 +222,15 @@ def build(data: Path, strategies, now=None):
             alerts.append(f'{d}: 判定できたレースが {days.get(d, 0)} / {rc[d]}（記録漏れ）')
 
     var = dict(last=variants(data, [last]) if last else [], week=variants(data, recent), all=variants(data, dates))
+    try:  # 選手の運気（占い）と成績の関係（検証用・期待値には未使用）
+        sys.path.insert(0, HERE)
+        import fortune_study
+        luck = fortune_study.study(data)
+    except Exception:  # noqa: BLE001
+        luck = None
     return dict(generated=now.strftime('%Y-%m-%d %H:%M'), days=len(dates), first=dates[0] if dates else None, last=last, variants=var,
                 yesterday=yesterday, strategies=strat, mine=mine, calib=dict(all=cal_all, week=cal_week), ll=ll,
-                alerts=alerts, notes=notes,
+                alerts=alerts, notes=notes, luck=luck,
                 rule='1日の結果ではロジックを直さない（運の影響が大きい）。⚠ が出た時だけ原因を調べて直す。月1回、十分な点数で学習し直す')
 
 

@@ -180,6 +180,7 @@ def main(argv=None, clock=None, sleep=time.sleep):
     ap.add_argument('--on-day-done', default='', help='その日のレースの記録が終わった時に実行するコマンド（{date} が日付に置き換わる。'
                     '結果の収集を始める用。終わるのは待たない）')
     ap.add_argument('--settle-repo', default='', help='［賭けた］記録をレースごとにすぐ精算する（データ用リポジトリのフォルダ。live_settle.py）')
+    ap.add_argument('--riders', action='store_true', help='空き時間に選手の生年月日を少しずつ取得（占いの表示・検証用。rider_profile.py）')
     ap.add_argument('--blocked-flag', default='', help='サーバーから拒否されたら、このファイルを作る（次の実行のリレーを止める）')
     a = ap.parse_args(argv)
     clock = clock or (lambda: datetime.now(N.JST))
@@ -195,9 +196,16 @@ def main(argv=None, clock=None, sleep=time.sleep):
         import live_settle
         settler = live_settle.LiveSettler(a.settle_repo)
     a._settler = settler
+    a._bdays = None
+    if a.riders:
+        import rider_profile
+        a._bdays = rider_profile.Birthdays(a.out_dir, fetch=rider_profile.netkeirin_fetch)
+        a._known = rider_profile.known_players(a.out_dir)
     flushed_at = [clock()]
 
     def flush():
+        if a._bdays is not None:
+            a._bdays.save()
         if a.flush_cmd:
             subprocess.run(a.flush_cmd, shell=True, check=False)
         flushed_at[0] = clock()
@@ -205,6 +213,8 @@ def main(argv=None, clock=None, sleep=time.sleep):
     try:
         while True:
             site = make_site(a, date, alerter) if a.site else None
+            if site is not None and a._bdays is not None:
+                site.birthdays = a._bdays
             try:
                 finished = run_day(a, date, until, offsets, stats, alerter, site, flush, flushed_at, clock, sleep)
             finally:
@@ -238,6 +248,8 @@ def main(argv=None, clock=None, sleep=time.sleep):
             print(alerter.summary())
         if settler is not None:
             print(settler.summary())
+        if a._bdays is not None:
+            print(a._bdays.summary())
 
 
 def reload_site_inputs(a, site):
@@ -350,6 +362,15 @@ def run_day(a, date, until, offsets, stats, alerter, site, flush, flushed_at, cl
                 raise
             except Exception as e:  # noqa: BLE001  精算の失敗で記録を止めない
                 print(f'  ! 即時精算に失敗 {type(e).__name__}', flush=True)
+        bdays = getattr(a, '_bdays', None)
+        if bdays is not None and not live_now:
+            try:  # 空き時間に選手の生年月日を少しずつ（今日の出走選手を優先）
+                today = [r.get('player_id', '') for c in (getattr(site, 'cards', None) or {}).values() if c for r in c]
+                bdays.fetch_some(today + getattr(a, '_known', []), 2, clock())
+            except N.Blocked:
+                raise
+            except Exception as e:  # noqa: BLE001  占い用の取得の失敗で記録を止めない
+                print(f'  ! 選手の生年月日の取得に失敗 {type(e).__name__}', flush=True)
         if races and remaining(races, date, offsets, done_nk(), clock()) == 0:
             print(f'{date} の記録すべきレースは終わりました', flush=True)
             return True
@@ -376,6 +397,8 @@ def next_day_site(a, date, alerter):
     site = make_site(a, nxt, alerter)
     if site is None:
         return False
+    if getattr(a, '_bdays', None) is not None:
+        site.birthdays = a._bdays
     site.set_races(races)
     site.flush(force=True)
     print(f'期待値ボード: 翌日（{nxt}）の予定 {len(races)}レースに切り替えました')
