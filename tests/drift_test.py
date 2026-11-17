@@ -67,6 +67,24 @@ def main():
     check([x[6] for x in rows] == sorted([x[6] for x in rows], reverse=True), '確定予想の期待値の高い順')
     t3 = race['snaps']['C-2']['types']['3連単'][0]
     check(t3[5] == t3[2], '学習が無い券種は今のオッズのまま')
+    # v2 回帰: 割安に見えた組ほど下がる（EV が高いほど 確定/締切前 が小さい）。データが足りない時点は使わない
+    import math as _m
+    import random as _r
+    rnd = _r.Random(0)
+    rows = []
+    for i in range(3000):
+        bt = ['2車複', 'ワイド', '2車単', '3連複', '3連単'][i % 5]
+        ev = rnd.uniform(0.3, 2.0)
+        o = rnd.uniform(3, 80)
+        rows.append((bt, 'C-2', o, ev, -0.5 * _m.log(ev) + rnd.gauss(0, 0.05)))
+    model = D.fit_model(rows + [(bt, 'C-5', o, ev, lr) for bt, _, o, ev, lr in rows[:100]])
+    check('C-2' in model and 'C-5' not in model, f'組数が足りない時点は回帰を作らない {sorted(model)}')
+    tbl = {'_model': model, '2車複': {'C-2': {'|': {'ratio': 1.3}}}}
+    r_lo, r_hi = D.ratio(tbl, '2車複', 'C-2', 20.0, 0.8), D.ratio(tbl, '2車複', 'C-2', 20.0, 1.5)
+    check(abs(r_hi - 1.5 ** -0.5) < 0.03 and r_lo > 1.0 > r_hi, f'割安に見えた組ほど下がる（EV0.8→{r_lo:.2f}・EV1.5→{r_hi:.2f}）')
+    check(D.ratio(tbl, '2車複', 'C-2', 20.0, None) == 1.3 and D.ratio(tbl, '2車複', 'C-5', 20.0, 1.5) == 1.0,
+          'EV が無い時・回帰が無い時点は従来の表')
+    check(0.3 <= D.ratio(tbl, '2車複', 'C-2', 20.0, 100.0) <= 2.0, '極端な値は 0.3〜2.0 に収める')
     print('\n全テスト成功')
 
 
