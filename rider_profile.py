@@ -3,11 +3,14 @@
 """
 選手の生年月日（占いの表示・検証用）。netkeirin の選手ページから1人1回だけ取得して、データ用リポジトリに保存する（私的利用のみ）。
 
-  * 保存先: データ用リポジトリの data/riders/birthdays.json  {選手ID: {"birth": "1983-01-02" or null, "at": 取得日, "tries": 回数}}
+  * 保存先: データ用リポジトリの data/riders/birthdays.csv（1行 = 1選手: 選手ID,生年月日,取得日,回数）
+    記録ジョブと一括取得が同時に書いても git で衝突しないよう、1行1選手の CSV にして、データ用リポジトリの
+    .gitattributes で merge=union（両方の行を残す）にしている。同じ選手の行が複数あれば、読む時に生年月日のある行を優先する
   * 記録ジョブの空き時間（最新の更新をしていない時）に、今日の出走選手 → 過去に出走した選手の順で少しずつ取る
     （1日の上限あり・1リクエストごとの間隔は netkeirin_collector の既定どおり）
   * 生年月日が読めなかったページは、解析の確認用に最初の数件だけ data/riders/_samples/ に保存する（非公開のデータ用リポジトリ）
 """
+import csv
 import json
 import re
 from datetime import datetime
@@ -50,16 +53,52 @@ def parse_birth(html: str):
     return None
 
 
+FIELDS = ['player_id', 'birth', 'at', 'tries']
+
+
+def _better(a, b):
+    """同じ選手の2つの記録 → 生年月日のある方（どちらも無ければ回数の多い方）"""
+    if not a:
+        return dict(b)
+    if not b:
+        return dict(a)
+    if bool(a.get('birth')) != bool(b.get('birth')):
+        return dict(a if a.get('birth') else b)
+    return dict(a if int(a.get('tries') or 0) >= int(b.get('tries') or 0) else b)
+
+
+def load(data_dir):
+    """{選手ID: {birth, at, tries}}（CSV。古い JSON があれば合わせる）"""
+    d = Path(data_dir) / 'riders'
+    out = {}
+    try:
+        for k, v in json.loads((d / 'birthdays.json').read_text(encoding='utf-8')).items():
+            out[k] = _better(out.get(k), v)
+    except (OSError, ValueError):
+        pass
+    try:
+        with open(d / 'birthdays.csv', newline='', encoding='utf-8') as f:
+            for r in csv.DictReader(f):
+                k = str(r.get('player_id') or '').strip()
+                if not k or k == 'player_id':  # 合わせた時に見出し行が混ざっても飛ばす
+                    continue
+                try:
+                    tries = int(r.get('tries') or 0)
+                except ValueError:
+                    tries = 0
+                out[k.zfill(6)] = _better(out.get(k.zfill(6)), dict(birth=r.get('birth') or None, at=r.get('at', ''), tries=tries))
+    except OSError:
+        pass
+    return out
+
+
 class Birthdays:
     def __init__(self, data_dir, fetch=None, per_day=400):
         self.dir = Path(data_dir) / 'riders'
-        self.path = self.dir / 'birthdays.json'
+        self.path = self.dir / 'birthdays.csv'
         self.fetch = fetch
         self.per_day = per_day
-        try:
-            self.data = json.loads(self.path.read_text(encoding='utf-8'))
-        except (OSError, ValueError):
-            self.data = {}
+        self.data = load(data_dir)
         self.count = {}  # 日付 → 今日取得した件数
         self.dirty = False
         self.stats = dict(fetched=0, found=0)
@@ -129,7 +168,19 @@ class Birthdays:
         if not self.dirty:
             return False
         self.dir.mkdir(parents=True, exist_ok=True)
-        self.path.write_text(json.dumps(self.data, ensure_ascii=False, indent=0, sort_keys=True), encoding='utf-8')
+        # 書く直前にファイルを読み直して合わせる（別の実行が先に書いた分を消さない）
+        cur = load(self.dir.parent)
+        for k, v in self.data.items():
+            cur[k] = _better(cur.get(k), v)
+        self.data = cur
+        tmp = self.path.with_suffix('.tmp')
+        with open(tmp, 'w', newline='', encoding='utf-8') as f:
+            w = csv.writer(f)
+            w.writerow(FIELDS)
+            for k in sorted(self.data):
+                v = self.data[k]
+                w.writerow([k, v.get('birth') or '', v.get('at', ''), v.get('tries', 0)])
+        tmp.replace(self.path)
         self.dirty = False
         return True
 

@@ -78,6 +78,27 @@ def buy_line(p, ev_min=1.10, drift=None, bt='', snap=''):
     return math.ceil(hi * 10 - 1e-9) / 10
 
 
+def lines_of(cards):
+    """出走表 → 並び予想 [[車番, ...], ...]（前から順・欠車は除く）と ○分戦"""
+    rows = [r for r in cards if str(r.get('absent', 0)) not in ('1', 'True', 'true')]
+
+    def num(x, d=99):
+        try:
+            return int(float(x))
+        except (TypeError, ValueError):
+            return d
+    groups = {}
+    for r in rows:
+        li = num(r.get('line'))
+        key = li if li != 99 else 100 + num(r.get('car_number'))
+        groups.setdefault(key, []).append((num(r.get('line_position'), 1), num(r.get('car_number'))))
+    lines = [[c for _, c in sorted(v)] for _, v in sorted(groups.items())]
+    if not any(num(r.get('line')) != 99 for r in rows):
+        return [], ''
+    ltype = next((r.get('line_type') for r in rows if r.get('line_type')), '')
+    return lines, ltype
+
+
 class SiteBuilder:
     def __init__(self, model, password, out_dir, date, cards_cache=None, cards_fn=None, push_fn=None, strategies=None, drift=None, report=None):
         self.drift = drift or {}
@@ -255,6 +276,10 @@ class SiteBuilder:
         luck = self._luck(cards)
         if luck:
             race['luck'] = luck
+        lines, ltype = lines_of(cards)
+        if lines:
+            race['lines'] = lines
+            race['line_type'] = ltype
         try:
             import reasons
             why = reasons.build(cards, res)

@@ -199,7 +199,7 @@ def main(argv=None, clock=None, sleep=time.sleep):
     a._bdays = None
     if a.riders:
         import rider_profile
-        a._bdays = rider_profile.Birthdays(a.out_dir, fetch=rider_profile.netkeirin_fetch)
+        a._bdays = rider_profile.Birthdays(a.out_dir, fetch=rider_profile.netkeirin_fetch, per_day=800)
         a._known = rider_profile.known_players(a.out_dir)
     flushed_at = [clock()]
 
@@ -366,7 +366,8 @@ def run_day(a, date, until, offsets, stats, alerter, site, flush, flushed_at, cl
         if bdays is not None and not live_now:
             try:  # 空き時間に選手の生年月日を少しずつ（今日の出走選手を優先）
                 today = [r.get('player_id', '') for c in (getattr(site, 'cards', None) or {}).values() if c for r in c]
-                bdays.fetch_some(today + getattr(a, '_known', []), 2, clock())
+                # 今日の出走選手で未取得の人がいれば多めに（ボードの全員に運気を出すため）、いなければ過去の選手を少しずつ
+                bdays.fetch_some(today + getattr(a, '_known', []), 6 if bdays.missing(today) else 2, clock())
             except N.Blocked:
                 raise
             except Exception as e:  # noqa: BLE001  占い用の取得の失敗で記録を止めない
