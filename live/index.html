@@ -723,7 +723,7 @@ h2 { font-size: 15px; margin: 16px 0 6px; }
     const view = st.view || 'single';
     const tables = view === 'group' ? groupSection(s.groups || {}) : TYPES.map((bt) => typeTable(bt, s.types[bt] || [])).join('');
     app.innerHTML = head + `<main><div class="card"><div class="ttl" style="font-size:20px">${esc(d.venue)} ${d.rn}R <span class="muted" style="font-weight:normal">締切 ${esc(d.deadline || '-')}・発走 ${esc(d.start)}</span></div>
-      <div class="riders">${riders}</div>
+      <div class="riders">${riders}</div>${linesHtml(d)}
       <div class="seg">${SNAPS.map((x) => `<button data-s="${x}" ${d.snaps[x] ? '' : 'disabled'} class="${x === st.snap ? 'on' : ''}">${SNAP_LABEL[x]}</button>`).join('')}</div>
       <div class="muted">取得 ${esc(s.at)} ／ ${s.market_ok ? 'オッズと融合済み' : '<span style="color:var(--bad);font-weight:700">3連単オッズ不足（参考値）</span>'}</div>
       ${win}${riderMemo(s)}${luckMemo(d)}
@@ -830,13 +830,22 @@ h2 { font-size: 15px; margin: 16px 0 6px; }
   }
   // 選手の運気（六星占術・四柱推命）: 生年月日からの計算。期待値には入れていない（最後の判断の参考・データは検証中）
   function luckMark(sc) { return sc >= 3 ? '🌟' : sc >= 1 ? '🙂' : sc <= -3 ? '💀' : sc <= -1 ? '🌧' : '·'; }
+  // 並び予想（前から順。ラインごとに囲む）
+  function linesHtml(d) {
+    const L = d.lines || [];
+    if (!L.length) return '';
+    const sty = Object.fromEntries((d.riders || []).map(([c, , , , s]) => [c, s]));
+    return `<div style="margin-top:8px"><div class="muted" style="font-size:12px">並び予想${d.line_type ? '（' + esc(d.line_type) + '）' : ''}　← 前</div>
+      <div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:4px">${L.map((ln) => `<span style="display:inline-flex;gap:2px;align-items:center;padding:3px 5px;border:1px solid var(--line, rgba(127,127,127,.35));border-radius:8px">${ln.map((c) => `<span style="display:inline-flex;flex-direction:column;align-items:center">${car(c)}<span class="muted" style="font-size:10px;line-height:1.1">${esc(sty[c] || '')}</span></span>`).join('')}</span>`).join('')}</div></div>`;
+  }
   function luckMemo(d) {
     const lk = d.luck || {};
-    const ks = Object.keys(lk).sort((a, b) => a - b);
-    if (!ks.length) return '';
+    const all = (d.riders || []).map(([c]) => String(c));
+    const ks = (all.length ? all : Object.keys(lk)).sort((a, b) => a - b);
+    if (!Object.keys(lk).length && !all.length) return '';
     return `<details style="margin-top:6px"><summary style="cursor:pointer;color:var(--accent);font-weight:700">🔮 選手の運気（六星占術・四柱推命／参考・期待値には未使用）</summary>
       <div class="muted" style="font-size:12px;margin-top:4px">🌟好調 🙂良い · ふつう 🌧やや悪い 💀悪い（年・月・日の運気の合計）。◎好調 ○良い −ふつう △小殺界 ▲中殺界 ✕大殺界。暦の区切りは立春・節入りの近似。</div>
-      ${ks.map((c) => `<div style="display:flex;gap:8px;align-items:flex-start;margin-top:6px;font-size:13px">${car(c)}<span style="flex:1">${luckMark(lk[c][2])} ${esc(lk[c][1])}</span></div>`).join('')}</details>`;
+      ${ks.map((c) => `<div style="display:flex;gap:8px;align-items:flex-start;margin-top:6px;font-size:13px">${car(c)}<span style="flex:1">${lk[c] ? `${luckMark(lk[c][2])} ${esc(lk[c][1])}` : '<span class="muted">生年月日を取得中（次の更新で表示）</span>'}</span></div>`).join('')}</details>`;
   }
   // レース画面の各組の［賭けた］（締切後・過去のレースも記録できる）
   function betCell(bt, k, x) {

@@ -133,6 +133,14 @@ def test_site_luck_and_study():
         assert sum(v[1] for v in r['sections']['fav_lose']['table']['運気点']) == 1  # 1着確率45%以上は1番車だけ
 
 
+def test_lines_of():
+    import netkeirin_site as S
+    cards = [dict(car_number=c, line=l, line_position=p, line_type='三分戦', absent=a)
+             for c, l, p, a in [(4, 1, 1, 0), (1, 1, 2, 0), (2, 1, 3, 0), (3, 2, 1, 0), (7, 2, 2, 0), (5, 3, 1, 0), (6, 3, 2, 1)]]
+    assert S.lines_of(cards) == ([[4, 1, 2], [3, 7], [5]], '三分戦')
+    assert S.lines_of([dict(car_number=1, line='')]) == ([], '')
+
+
 if __name__ == '__main__':
     for k, v in list(globals().items()):
         if k.startswith('test_'):
