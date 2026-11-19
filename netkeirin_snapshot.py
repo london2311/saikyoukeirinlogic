@@ -31,9 +31,14 @@ FIELDS = ['race_id', 'date', 'race_number', 'snap', 'snap_at', 'start_at', 'dead
           'bet_type', 'combination', 'odds', 'odds_max', 'popularity', 'absent']
 LIST_REFRESH_MIN = 30
 # 期待値ボードの「最新」: 締切 LIVE_MIN 分前から締切まで、LIVE_SEC 秒ごとにオッズを取り直して表示だけ更新する
-# （記録のファイル・台帳には入れない）。サーバーの負担を考えて 30 秒より短くはしない
+# （記録のファイル・台帳には入れない）。サーバーの負担を考えて 60 秒より短くはしない
+# （30 秒ごとにしていた時、複数の会場の締切が重なった時間帯に 503 が返った）
 LIVE_MIN = 6
-LIVE_SEC = 30
+LIVE_SEC = 60
+# サーバーが一時的に応答できない（503）時: この分数待ってから、「最新」の間隔を広げて再開する。1回の実行でこの回数を超えたら止める
+UNAVAIL_WAIT_MIN = 15
+UNAVAIL_MAX = 3
+LIVE_SEC_SLOW = 120
 LIVE_FLUSH_SEC = 15   # 締切直前のレースがある間は、期待値ボードをこの間隔で公開
 LOOP_SEC_LIVE = 5     # 同じく、見回りの間隔
 LATE_MIN = 2  # 締切直前以外の時点は、予定からこの分数以上遅れたら取らない
@@ -217,6 +222,18 @@ def main(argv=None, clock=None, sleep=time.sleep):
                 site.birthdays = a._bdays
             try:
                 finished = run_day(a, date, until, offsets, stats, alerter, site, flush, flushed_at, clock, sleep)
+            except N.Unavailable as e:
+                stats['unavail'] = stats.get('unavail', 0) + 1
+                if stats['unavail'] >= UNAVAIL_MAX:
+                    raise
+                print(f'! サーバーが一時的に応答できません（{e}）。{UNAVAIL_WAIT_MIN}分待ってから、'
+                      f'「最新」の更新を{LIVE_SEC_SLOW}秒ごとに広げて再開します（{stats["unavail"]}/{UNAVAIL_MAX - 1}回目）', flush=True)
+                flush()
+                a._live_sec = LIVE_SEC_SLOW
+                sleep(UNAVAIL_WAIT_MIN * 60)
+                if clock() >= until:
+                    break
+                continue
             finally:
                 if site is not None:
                     site.flush()
@@ -339,7 +356,7 @@ def run_day(a, date, until, offsets, stats, alerter, site, flush, flushed_at, cl
         live_now = live_jobs(races, date, clock())
         if site is not None:
             for nk, st, dl in live_now:
-                if (nk in live_at and clock() - live_at[nk] < timedelta(seconds=LIVE_SEC)) or clock() >= dl:
+                if (nk in live_at and clock() - live_at[nk] < timedelta(seconds=getattr(a, '_live_sec', LIVE_SEC))) or clock() >= dl:
                     continue
                 live_at[nk] = clock()
                 try:

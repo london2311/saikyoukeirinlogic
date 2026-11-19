@@ -121,7 +121,7 @@ h2 { font-size: 15px; margin: 16px 0 6px; }
   const BRANCH = 'site-data';
   // 更新の確認間隔: GitHub の API は、トークン無しだと1時間60回までなので60秒。資金管理のトークンがあれば15秒
   const REFRESH_SEC = () => (st.tok ? 15 : 60);
-  const SNAPS = ['C-15', 'C-10', 'C-5', 'C-2', 'LIVE'];  // 締切の15・10・5・2分前 と、締切6分前からの30秒ごとの最新
+  const SNAPS = ['C-15', 'C-10', 'C-5', 'C-2', 'LIVE'];  // 締切の15・10・5・2分前 と、締切6分前からの60秒ごとの最新
   const SNAP_LABEL = { 'C-15': '締切15分前', 'C-10': '締切10分前', 'C-5': '締切5分前', 'C-2': '締切2分前', LIVE: '最新' };
   const TYPES = ['2車複', 'ワイド', '3連複', '2車単', '3連単'];
   const VALIDATED = new Set(['2車複', 'ワイド']);
@@ -402,7 +402,7 @@ h2 { font-size: 15px; margin: 16px 0 6px; }
     const T0 = st.index.today_recs;
     const todayLine = T0 && T0.n && T0.date === st.index.date ? `<div class="mini" style="margin-top:4px">📈 <b>今日の推奨（REC3）</b> ${T0.n}点・精算 ${T0.settled}点・的中 ${T0.hits}（予想 ${T0.exp_hits}）・回収率 <b>${T0.stake ? (T0.ret / T0.stake * 100).toFixed(0) + '%' : '-'}</b>${T0.stake ? `（${T0.ret - T0.stake >= 0 ? '+' : ''}${yen(T0.ret - T0.stake)}）` : ''}</div>` : '';
     return `<div class="card hero" style="border:2px solid #2f5bea">${repLine}${todayLine}<h2>🎯 今の推奨（1点・${yen(stakeOf())}）<span class="muted" style="font-weight:normal">全場・締切の早い順・確定予想の期待値 ${(st.bank ? st.bank.set.evRec : DEF_SET.evRec).toFixed(2)} 以上・100倍以下・強い1番人気は含む組だけ</span></h2>
-      ${bankLine}${cards || '<div class="skip" style="margin-top:8px">⏸ 今は推奨がありません（見送り）。各レースの締切5分前から判定します（締切6分前からは30秒ごとに最新）。</div>'}</div>`;
+      ${bankLine}${cards || '<div class="skip" style="margin-top:8px">⏸ 今は推奨がありません（見送り）。各レースの締切5分前から判定します（締切6分前からは60秒ごとに最新）。</div>'}</div>`;
   }
   function bindBoard() {
     app.querySelectorAll('.betbtn').forEach((b) => b.onclick = async (e) => {
