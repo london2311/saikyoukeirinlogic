@@ -28,7 +28,7 @@ import keirin_collector as KC
 ITER = 200_000
 SITE_SNAPS = ('C-15', 'C-10', 'C-5', 'C-2')  # 締切の15・10・5・2分前
 REC_EV_MIN = 1.00  # 推奨の基準: 確定予想の期待値（1.0を超える見込みがあれば推奨）
-LIVE = 'LIVE'  # 締切直前の数分は30秒ごとに更新（記録・台帳には使わず、期待値ボードの表示だけ）
+LIVE = 'LIVE'  # 締切直前の数分は60秒ごとに更新（記録・台帳には使わず、期待値ボードの表示だけ）
 
 
 def drift_snap_for(deadline, now):

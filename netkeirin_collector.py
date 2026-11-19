@@ -110,6 +110,11 @@ class Blocked(Exception):
     """サーバーから拒否（403/429 等）された。回避せず中断する。"""
 
 
+class Unavailable(Blocked):
+    """サーバーが一時的に応答できない（503）。既定では Blocked と同じく中断する。
+    記録ジョブだけは、しばらく待って間隔を広げてから再開する（netkeirin_snapshot.py）"""
+
+
 # ---------------------------------------------------------------- 取得
 
 _last_request = [0.0]
@@ -133,7 +138,9 @@ def fetch(url: str, params: dict = None, interval: float = REQUEST_INTERVAL, dat
             body = res.read()
             charset = res.headers.get_content_charset() or "utf-8"
     except HTTPError as e:
-        if e.code in (401, 403, 429, 503):
+        if e.code == 503:
+            raise Unavailable(f"HTTP {e.code}: {url}") from e
+        if e.code in (401, 403, 429):
             raise Blocked(f"HTTP {e.code}: {url}") from e
         raise
     finally:

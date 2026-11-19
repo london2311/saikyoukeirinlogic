@@ -128,8 +128,8 @@ def test_snapshot():
     r1 = [n for n, nk in live if nk.endswith('2301')]
     gaps = [(b - a).total_seconds() for a, b in zip(r1, r1[1:])]
     dl1 = datetime(2099, 12, 31, 9, 25, tzinfo=N.JST)
-    check(len(r1) >= 6 and min(gaps) >= 30 and all(dl1 - timedelta(minutes=6) <= x < dl1 for x in r1),
-          f'締切6分前〜締切に30秒以上の間隔で最新を更新（{len(r1)}回）')
+    check(len(r1) >= 3 and min(gaps) >= 60 and all(dl1 - timedelta(minutes=6) <= x < dl1 for x in r1),
+          f'締切6分前〜締切に60秒以上の間隔で最新を更新（{len(r1)}回）')
     rows4 = list(csv.DictReader(open(out4 / '2099' / 'odds_snap' / f'snap_{DATE}.csv', encoding='utf-8-sig')))
     check('LIVE' not in {r['snap'] for r in rows4}, '最新の更新は記録のファイルに入れない')
     S.SITE_FACTORY = None
@@ -145,6 +145,34 @@ def test_snapshot():
     S.main(['--out-dir', str(Path(tempfile.mkdtemp())), '--date', DATE, '--hours', '2', '--blocked-flag', str(flag)],
            clock=lambda: t[0], sleep=sleep)
     check(flag.exists(), '拒否されたらリレーを止める印を残す')
+    N.fetch = fake_fetch
+
+    # 503（一時的に応答できない）: 15分待って再開する。3回目で止める
+    flag2 = Path(tempfile.mkdtemp()) / 'blocked'
+    n503 = [0]
+
+    def once503(*a, **k):
+        if n503[0] == 0:
+            n503[0] += 1
+            raise N.Unavailable('HTTP 503')
+        return fake_fetch(*a, **k)
+    N.fetch = once503
+    out5 = Path(tempfile.mkdtemp())
+    t[0] = datetime(2099, 12, 31, 9, 0, tzinfo=N.JST)
+    S.main(['--out-dir', str(out5), '--date', DATE, '--until', '11:00', '--blocked-flag', str(flag2)], clock=lambda: t[0], sleep=sleep)
+    snap5 = out5 / '2099' / 'odds_snap' / f'snap_{DATE}.csv'
+    check(not flag2.exists() and snap5.exists(), '503が1回なら止めずに、待ってから記録を続ける')
+
+    def always503(*a, **k):
+        raise N.Unavailable('HTTP 503')
+    N.fetch = always503
+    keep = S.UNAVAIL_MAX
+    S.UNAVAIL_MAX = 2  # テストのレースは2つなので、上限を2回にして確かめる（本番は3回）
+    t[0] = datetime(2099, 12, 31, 9, 0, tzinfo=N.JST)
+    S.main(['--out-dir', str(Path(tempfile.mkdtemp())), '--date', DATE, '--hours', '5', '--blocked-flag', str(flag2)],
+           clock=lambda: t[0], sleep=sleep)
+    check(flag2.exists(), '503が上限の回数続いたら止めて、リレーも止める')
+    S.UNAVAIL_MAX = keep
     N.fetch = fake_fetch
 
     # 途中から再開しても、記録済みのものは取り直さない
