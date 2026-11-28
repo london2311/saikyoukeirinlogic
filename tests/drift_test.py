@@ -85,6 +85,29 @@ def main():
     check(D.ratio(tbl, '2車複', 'C-2', 20.0, None) == 1.3 and D.ratio(tbl, '2車複', 'C-5', 20.0, 1.5) == 1.0,
           'EV が無い時・回帰が無い時点は従来の表')
     check(0.3 <= D.ratio(tbl, '2車複', 'C-2', 20.0, 100.0) <= 2.0, '極端な値は 0.3〜2.0 に収める')
+
+    # v3: 割安に見えた組の補正（直近の候補で、実際の確定オッズが回帰の予想の何倍だったか）
+    tb = {'2車複': {'C-2': {'|': {'ratio': 1.0}}}}  # 回帰なし・比 1.0 の単純な表で確かめる
+    cand = []
+    for i in range(400):
+        d = f'209912{(i % 9) + 1:02d}'
+        ev = 1.2 if i % 2 else 0.6   # 割安に見えた組（1.2）とそうでない組（0.6）
+        f = 10.0 * (0.8 if ev >= 1 else 1.1)
+        cand.append(dict(date=d, race_id='x', snap='C-2', bet_type='2車複', key='1-2', prob=round(ev / 10, 4), odds=10.0,
+                         ev_now=ev, ev_d=ev, odds_final=f, has_fav=0, fav_win=0, payoff=0))
+    cp = data / 'ledger' / 'cands.csv'
+    write(cp, cand)
+    sel = D.fit_selection(cp, tb)
+    k = sel['C-2']['2車複']['k']
+    check(k == D.SEL_CLIP[0] and sel['C-2']['2車複']['n'] < 400, f'直近の日の、割安に見えた組だけで測る（補正 ×{k}・下限で止める）')
+    tb['_sel'] = sel
+    check(D.ratio(tb, '2車複', 'C-2', 10.0, 1.2) == k and D.ratio(tb, '2車複', 'C-2', 10.0, 0.6) == 1.0,
+          '補正は確定予想の期待値0.95以上だけ（割安でない組は変えない）')
+    mid = D.ratio(tb, '2車複', 'C-2', 10.0, 0.9)
+    check(k < mid < 1.0, f'0.85〜0.95 は徐々に補正 {mid:.3f}')
+    check(D.ratio(tb, 'ワイド', 'C-2', 10.0, 1.2) == 1.0 and D.ratio(tb, '2車複', 'C-5', 10.0, 1.2) == 1.0, '測っていない券種・時点は補正しない')
+    few = D.fit_selection(cp, tb, days=1)
+    check(few['C-2']['2車複']['k'] > k, f'点数が少ない時は 1.0 に寄せる（×{few["C-2"]["2車複"]["k"]}）')
     print('\n全テスト成功')
 
 

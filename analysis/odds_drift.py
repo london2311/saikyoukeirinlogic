@@ -163,8 +163,61 @@ def summarize(logs):
     return table
 
 
+# v3（割安に見えた組の補正）: 回帰は大半を占める「割安でない組」に引っ張られるため、確定予想の期待値が 0.9 以上の組
+# （＝推奨の候補）では、確定オッズを高く見込みすぎていた（11/24〜27 の締切2分前、EV1.0以上で実際は予想の約0.93倍）。
+# そこで毎晩、直近 SEL_DAYS 日の候補（data/ledger/cands.csv）で「実際の確定オッズ ÷ 回帰の予想」を券種 × 時点ごとに測り、
+# 確定予想の期待値 0.85〜0.95 で徐々に、0.95 以上では全部、その倍率を掛ける。点数が少ない時は 1.0 に寄せる
+SEL_DAYS = 7
+SEL_FROM = 0.9      # 補正を測る組（回帰での確定予想の期待値がこれ以上）
+SEL_PRIOR = 50      # 点数が少ない時に 1.0 に寄せる強さ
+SEL_CLIP = (0.85, 1.03)
+SEL_RAMP = (0.85, 0.95)
+
+
+def fit_selection(cands_path, table, days=SEL_DAYS):
+    """{時点: {券種: {k, n}}}。table は補正前（_sel なし）"""
+    try:
+        rows = read(cands_path)
+    except OSError:
+        return {}
+    dates = sorted({r['date'] for r in rows})[-days:]
+    g = defaultdict(list)
+    for r in rows:
+        if r['date'] not in dates:
+            continue
+        try:
+            p, o, f, ev = float(r['prob']), float(r['odds']), float(r['odds_final']), float(r['ev_now'])
+        except (TypeError, ValueError, KeyError):
+            continue
+        if p <= 0 or o <= 1 or f <= 0:
+            continue
+        rb = _base_ratio(table, r['bet_type'], r['snap'], o, ev)
+        if p * o * rb >= SEL_FROM:
+            g[(r['snap'], r['bet_type'])].append(math.log(f / (o * rb)))
+    out = {}
+    for (snap, bt), v in g.items():
+        v = sorted(v)
+        cut = len(v) // 10  # 上下1割を除いた平均（極端な動きに引っ張られない）
+        t = v[cut:len(v) - cut] or v
+        m = sum(t) / len(t) * len(v) / (len(v) + SEL_PRIOR)
+        k = min(max(math.exp(m), SEL_CLIP[0]), SEL_CLIP[1])
+        out.setdefault(snap, {})[bt] = dict(k=round(k, 4), n=len(v))
+    return out
+
+
 def ratio(table, bt, snap, odds, ev=None):
-    """確定 ÷ 締切前 の予想比。細かい区分 → オッズ帯 → 券種×時点 の順に、データのあるもの。無ければ 1.0"""
+    """確定 ÷ 締切前 の予想比（回帰 → 割安に見えた組の補正）"""
+    rb = _base_ratio(table, bt, snap, odds, ev)
+    sel = ((table or {}).get('_sel') or {}).get(snap, {}).get(bt)
+    if sel and ev is not None and ev > 0:
+        lo, hi = SEL_RAMP
+        w = min(max((ev * rb - lo) / (hi - lo), 0.0), 1.0)
+        rb *= sel['k'] ** w
+    return rb
+
+
+def _base_ratio(table, bt, snap, odds, ev=None):
+    """確定 ÷ 締切前 の予想比（補正前）。回帰 → 細かい区分 → オッズ帯 → 券種×時点 の順に、データのあるもの。無ければ 1.0"""
     m = (table or {}).get('_model', {}).get(snap)
     if m and ev is not None and ev > 0:
         return model_ratio(m, bt, odds, ev)
@@ -227,11 +280,16 @@ def main():
     model = fit_model(collect.rows)
     if model:
         table['_model'] = model
+    sel = fit_selection(data / 'ledger' / 'cands.csv', table)
+    if sel:
+        table['_sel'] = sel
     n = sum(len(v) for v in logs.values())
-    json.dump(dict(note='締切前オッズ → 確定オッズの比。_model = 時点ごとの回帰（券種の定数・log EV・log オッズ）、'
+    json.dump(dict(note='締切前オッズ → 確定オッズの比。_model = 時点ごとの回帰（券種の定数・log EV・log オッズ）、_sel = 割安に見えた組の補正（直近の実績）、'
                         'それ以外 = 券種 → 時点 → "オッズ帯|割安さ帯" の中央値（回帰が無い時点用）。集計値のみ',
                    pairs=n, table=table), open(a.out, 'w', encoding='utf-8'), ensure_ascii=False, indent=1)
     print(f'突き合わせた組 {n} / 区分 {sum(len(s) for t in table.values() for s in t.values())}')
+    for snap, d in sorted(sel.items()):
+        print(f'  割安に見えた組の補正 {snap}: ' + '・'.join(f'{bt} ×{v["k"]:.3f}（{v["n"]}組）' for bt, v in sorted(d.items())))
     for snap, m in sorted(model.items()):
         ex = '・'.join(f'EV{e}→{model_ratio(m, "2車複", 20.0, e):.2f}' for e in (0.9, 1.1, 1.3, 1.6))
         print(f'  回帰 {snap}: {m["n"]}組（EV0.9以上 {m["n_high"]}）。2車複20倍の確定/締切前: {ex}')

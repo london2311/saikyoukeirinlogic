@@ -35,7 +35,7 @@ def main():
         card_calls.append(nk)
         return cards
     al = NA.Alerter(E.load_model(), sender=lambda s, b: mails.append((s, b)), cards_fn=cards_fn)
-    check({s['id'] for s in al.strategies} == {'Q110', 'Q120M', 'W110'}, '通知の対象は strategies.json の alert の買い方')
+    check({s['id'] for s in al.strategies} == {'Q110', 'Q120M'}, '通知の対象は strategies.json の alert の買い方（負けが確定した W110 は外した）')
     start = datetime(2099, 12, 31, 15, 0, tzinfo=JST)
     got = al.on_snapshot(NK, 'C-10', start, odds, start - timedelta(minutes=15))
     check(got == [] and mails == [], '通知の時点（締切5分前・2分前）以外では判定しない')
