@@ -220,6 +220,8 @@ def main(argv=None, clock=None, sleep=time.sleep):
             site = make_site(a, date, alerter) if a.site else None
             if site is not None and a._bdays is not None:
                 site.birthdays = a._bdays
+            if site is not None:
+                site.nuance = load_nuance(a.out_dir)
             try:
                 finished = run_day(a, date, until, offsets, stats, alerter, site, flush, flushed_at, clock, sleep)
             except N.Unavailable as e:
@@ -267,6 +269,14 @@ def main(argv=None, clock=None, sleep=time.sleep):
             print(settler.summary())
         if a._bdays is not None:
             print(a._bdays.summary())
+
+
+def load_nuance(out_dir):
+    """選手ごとのクセ（毎朝の台帳ジョブが data/riders/nuance.json に作る）。無ければ空"""
+    try:
+        return json.loads((Path(out_dir) / 'riders' / 'nuance.json').read_text(encoding='utf-8'))
+    except (OSError, ValueError):
+        return {}
 
 
 def reload_site_inputs(a, site):
@@ -417,6 +427,7 @@ def next_day_site(a, date, alerter):
         return False
     if getattr(a, '_bdays', None) is not None:
         site.birthdays = a._bdays
+    site.nuance = load_nuance(a.out_dir)
     site.set_races(races)
     site.flush(force=True)
     print(f'期待値ボード: 翌日（{nxt}）の予定 {len(races)}レースに切り替えました')

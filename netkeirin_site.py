@@ -78,6 +78,28 @@ def buy_line(p, ev_min=1.10, drift=None, bt='', snap=''):
     return math.ceil(hi * 10 - 1e-9) / 10
 
 
+def _more(x):
+    return f'{abs(x) * 100:.0f}%{"多い" if x > 0 else "少ない"}'
+
+
+def nuance_text(p):
+    """選手のクセ（analysis/rider_nuance.py の値）→ 選手メモの1行。目立つものだけ"""
+    if not p:
+        return ''
+    out = []
+    if 'jr' in p:
+        out.append(f'自力宣言で実際に動いた率 {p["jr"][0] * 100:.0f}%（{p["jr"][1]}回）')
+    if 'bt' in p and abs(p['bt'][0]) >= 0.02:
+        out.append(f'番手で前とワンツー 市場の見込みより{_more(p["bt"][0])}（{p["bt"][1]}回）')
+    if 'sg' in p and abs(p['sg'][0]) >= 0.02:
+        out.append(f'単騎の3着以内 市場の見込みより{_more(p["sg"][0])}（{p["sg"][1]}回）')
+    if 'al' in p and abs(p['al'][0]) >= 0.02:
+        out.append(f'3着以内 市場の見込みより{_more(p["al"][0])}（{p["al"][1]}走）')
+    if 'fm' in p and abs(p['fm']) >= 0.1:
+        out.append(f'最近5走の上がり {abs(p["fm"]):.1f}秒{"速い" if p["fm"] > 0 else "遅い"}（それまでと比べて）')
+    return '📊 クセ（参考・期待値には未使用）: ' + '・'.join(out) if out else ''
+
+
 def lines_of(cards):
     """出走表 → 並び予想 [[車番, ...], ...]（前から順・欠車は除く）と ○分戦"""
     rows = [r for r in cards if str(r.get('absent', 0)) not in ('1', 'True', 'true')]
@@ -103,6 +125,7 @@ class SiteBuilder:
     def __init__(self, model, password, out_dir, date, cards_cache=None, cards_fn=None, push_fn=None, strategies=None, drift=None, report=None):
         self.drift = drift or {}
         self.birthdays = None  # 選手の生年月日（rider_profile.Birthdays）。占いの表示だけに使い、期待値には使わない
+        self.nuance = {}  # 選手ごとのクセ（analysis/rider_nuance.py）。選手メモの参考表示だけ（期待値には効果がなかった）
         self.model = model
         self.out = Path(out_dir)
         self.date = date
@@ -285,6 +308,12 @@ class SiteBuilder:
             why = reasons.build(cards, res)
         except Exception:  # noqa: BLE001  説明が作れなくても数値は出す
             why = {}
+        for r in cards:
+            if str(r.get('absent', 0)) in ('1', 'True', 'true'):
+                continue
+            t = nuance_text(self.nuance.get(str(r.get('player_id', '')).zfill(6)))
+            if t and isinstance(why, dict):
+                why.setdefault('riders', {}).setdefault(str(int(r['car_number'])), []).append(t)
         race['snaps'][snap] = dict(at=f'{now:%H:%M:%S}', market_ok=bool(res.get('market_ok')), win=win, types=types,
                                    hits=hits, strat=strat, groups=groups, why=why)
         self._save(f'{wt}.enc', race)

@@ -575,6 +575,14 @@ h2 { font-size: 15px; margin: 16px 0 6px; }
         <div class="scroll"><table class="rep"><tr><th>券種・期待値の帯</th><th>組数</th><th>予想の的中</th><th>実際</th><th>z</th></tr>${cal || '<tr><td colspan="5" class="muted">まだデータがありません</td></tr>'}</table></div>
         <div class="muted">z が ±3 を超えたら、運ではなく予想のずれ（⚠ に出ます）。2車複の的中組の当たり方 オッズとの差: ${ll.diff == null ? '-' : (ll.diff > 0 ? '+' : '') + ll.diff}（z=${ll.z == null ? '-' : ll.z}、${ll.n || 0}R。マイナスほどオッズより良い）</div></div>
       ${(() => {
+        const N = R.nuance;
+        if (!N || !N.top3) return '';
+        const row = (k, r) => r ? `<tr><td>${k}</td><td>${(r.n_test || 0).toLocaleString()}</td><td>${r.ll_gain >= 0 ? '+' : ''}${r.ll_gain}</td><td class="${r.z >= 3 ? 'good' : ''}">${r.z >= 0 ? '+' : ''}${r.z}</td><td>${r.useful ? '<span class="pill good">効果あり</span>' : '<span class="pill off">効果なし</span>'}</td></tr>` : '';
+        return `<div class="card"><h2 style="margin-top:0">📊 選手ごとのクセ（有言実行率・番手の仕事・単騎・最近の調子）</h2>
+          <div class="muted">2〜7月で学習し、8月以降で「オッズだけ」と「オッズ＋クセ」の当たり方を比べた結果（毎朝更新）。効果ありになるまでは期待値に入れず、選手メモの参考表示だけ。</div>
+          <div class="scroll"><table class="rep"><tr><th>予想</th><th>確かめた数</th><th>当たり方の差</th><th>z</th><th>判定</th></tr>${row('3着以内', N.top3)}${row('番手のワンツー', N.pair)}</table></div></div>`;
+      })()}
+      ${(() => {
         const L = R.luck;
         if (!L || !L.sections) return '<div class="card"><h2 style="margin-top:0">🔮 選手の運気と成績</h2><div class="muted">選手の生年月日を集めている途中です。</div></div>';
         const tb = (rows) => `<div class="scroll"><table class="rep"><tr><th>区分</th><th>出走</th><th>実際</th><th>期待</th><th>z</th><th>前半/後半</th></tr>
@@ -825,7 +833,7 @@ h2 { font-size: 15px; margin: 16px 0 6px; }
     const rs = (s.why || {}).riders || {};
     const ks = Object.keys(rs).filter((k) => rs[k].length).sort((a, b) => a - b);
     if (!ks.length) return '';
-    return `<details style="margin-top:6px"><summary style="cursor:pointer;color:var(--accent);font-weight:700">📝 選手メモ（得点・脚質・コメント・並び・関係）</summary>
+    return `<details style="margin-top:6px"><summary style="cursor:pointer;color:var(--accent);font-weight:700">📝 選手メモ（得点・脚質・コメント・並び・関係・クセ）</summary>
       ${ks.map((c) => `<div style="display:flex;gap:8px;align-items:flex-start;margin-top:6px;font-size:13px">${car(c)}<span style="flex:1">${rs[c].map(esc).join(' ／ ')}</span></div>`).join('')}</details>`;
   }
   // 選手の運気（六星占術・四柱推命）: 生年月日からの計算。期待値には入れていない（最後の判断の参考・データは検証中）

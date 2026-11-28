@@ -237,7 +237,7 @@ def build(data: Path, strategies, now=None):
         luck = None
     return dict(generated=now.strftime('%Y-%m-%d %H:%M'), days=len(dates), first=dates[0] if dates else None, last=last, variants=var,
                 yesterday=yesterday, strategies=strat, mine=mine, calib=dict(all=cal_all, week=cal_week), ll=ll,
-                alerts=alerts, notes=notes, luck=luck,
+                alerts=alerts, notes=notes, luck=luck, nuance=load_json(led / 'nuance.json', None),
                 rule='1日の結果ではロジックを直さない（運の影響が大きい）。⚠ が出た時だけ原因を調べて直す。月1回、十分な点数で学習し直す')
 
 
