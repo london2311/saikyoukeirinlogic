@@ -54,6 +54,8 @@ jobs:
           python analysis/odds_drift.py --data _data_repo/data --out _data_repo/data/ledger/drift.json
           # 期待値ボードの［賭けた］記録を、確定した払戻で精算（data/bets/settled.json）
           python analysis/settle_bets.py --data _data_repo/data
+          # 選手ごとのクセ（有言実行率・番手の仕事・単騎・最近の調子）。期待値には使わず、選手メモの参考表示と効果の確認だけ
+          python analysis/rider_nuance.py --data _data_repo/data --out _data_repo/data/ledger/nuance.json --profiles _data_repo/data/riders/nuance.json
           # 毎朝の検証レポートと異常の自動チェック（期待値ボードの 📊 に出す）
           python analysis/daily_report.py --data _data_repo/data
       - name: データ用リポジトリにコミット
@@ -63,6 +65,7 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add data/ledger
+          if [ -f data/riders/nuance.json ]; then git add data/riders/nuance.json; fi
           if [ -d data/bets ]; then git add data/bets; fi
           if git diff --cached --quiet; then echo "変更なし"; exit 0; fi
           git commit -q -m "ledger: 事前登録した買い方の成績 $(date -u -d '+9 hours' +%Y-%m-%d)"

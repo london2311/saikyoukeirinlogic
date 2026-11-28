@@ -141,6 +141,30 @@ def test_lines_of():
     assert S.lines_of([dict(car_number=1, line='')]) == ([], '')
 
 
+def test_nuance():
+    import netkeirin_site as S
+    t = S.nuance_text({'jr': [0.72, 25], 'bt': [0.05, 30], 'sg': [0.01, 9], 'fm': -0.2})
+    assert '自力宣言で実際に動いた率 72%（25回）' in t and '5%多い' in t and '単騎' not in t and '0.2秒遅い' in t
+    assert S.nuance_text({}) == '' and S.nuance_text({'sg': [0.01, 9]}) == ''
+    import rider_nuance as RN
+    with tempfile.TemporaryDirectory() as d:
+        p = Path(d) / '2026'
+        p.mkdir()
+        with open(p / 'odds_202611.csv', 'w', newline='', encoding='utf-8') as f:
+            w = csv.writer(f)
+            w.writerow(['race_id', 'bet_type', 'combination', 'odds'])
+            w.writerows([['R1', '3連単', '1-2-3', 2.0], ['R1', '3連単', '2-1-3', 4.0], ['R1', '3連単', '3-1-2', 4.0]])
+        m = RN.market(Path(d))['R1']
+        assert abs(sum(m['win'].values()) - 1) < 1e-9 and abs(m['top3'][1] - 1) < 1e-9 and abs(m['pair'][(1, 2)] - 0.75) < 1e-9
+        st = RN.Stats()
+        rs = [dict(car=1, pid='000001', comment='自力。', line='1', pos=1, size=2, single=False, order=1, sb=True, run=True, half=11.0),
+              dict(car=2, pid='000002', comment='1番君。', line='1', pos=2, size=2, single=False, order=2, sb=False, run=False, half=11.2),
+              dict(car=3, pid='000003', comment='単騎。', line='2', pos=1, size=1, single=True, order=3, sb=False, run=False, half=11.4)]
+        st.update(rs, m)
+        f1, f2 = st.feats('000001'), st.feats('000002')
+        assert f1['jiriki_n'] == 1 and f1['jiriki_rate'] == 1.0 and f2['banete_n'] == 1 and f2['banete'] > 0
+
+
 if __name__ == '__main__':
     for k, v in list(globals().items()):
         if k.startswith('test_'):
