@@ -221,6 +221,13 @@ def build(data: Path, strategies, now=None):
         if rc.get(d) and days.get(d, 0) < 0.7 * rc[d]:
             alerts.append(f'{d}: 判定できたレースが {days.get(d, 0)} / {rc[d]}（記録漏れ）')
 
+    # 確定予想オッズの補正（analysis/odds_drift.py の _sel）: 割安に見えた組の確定オッズが、回帰の予想の何倍だったか
+    sel = (load_json(led / 'drift.json', {}).get('table') or {}).get('_sel') or {}
+    if sel:
+        notes.append('確定予想の補正（直近7日の実績。割安に見えた組は回帰の予想より下がりやすい）: '
+                     + '・'.join(f'{snap} {bt} ×{v["k"]:.2f}' for snap in ('C-5', 'C-2') for bt, v in sorted(sel.get(snap, {}).items())))
+        if any(v['k'] <= 0.86 for d in sel.values() for v in d.values()):
+            alerts.append('確定予想の補正が下限（×0.85）付近: 締切後の下落の仕方が変わった可能性。推奨の基準・下落の学習を見直す')
     var = dict(last=variants(data, [last]) if last else [], week=variants(data, recent), all=variants(data, dates))
     try:  # 選手の運気（占い）と成績の関係（検証用・期待値には未使用）
         sys.path.insert(0, HERE)
